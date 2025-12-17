@@ -842,7 +842,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> 
         ],
         [
             InlineKeyboardButton("Поддержка", callback_data="support_dialog"),
-            InlineKeyboardButton("СолорБоард", callback_data="solorboard_list")
+            InlineKeyboardButton("СолорБоард(ВРЕМЕННО НЕ РАБОТАЕТ)", callback_data="solorboard_list")
         ],
         [
             InlineKeyboardButton("Ссылки", callback_data="links"),
@@ -884,7 +884,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
 /help - Показать это сообщение.
 /profile [username/ID] - Показать информацию о профиле.
 /support - Написать сообщение в поддержку.
-/solorboard - Посмотреть или создать объявление для поиска сорола.
+/solorboard - Посмотреть или создать объявление для поиска сорол(ВРЕМЕННО НЕ РАБОТАЕТ).
 /links - Список полезных ссылок.
 /checknagrad [юзернейм или уникальный код участника] - Посмотреть свои награды или награды другого пользователя.
 /sellnagrad [название_награды/код_награды] - Продать свою награду за ОН.
