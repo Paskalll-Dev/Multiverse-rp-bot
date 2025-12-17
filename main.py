@@ -2,6 +2,7 @@ import logging
 import json
 import os
 import re
+import time
 import string
 import datetime
 import asyncio
@@ -4085,7 +4086,11 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_unknown_private_message))
 
     logger.info("Бот запущен...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("Ожидание завершения старого процесса...")
+time.sleep(45)  # Ждем 45 секунд
+
+# Старая строка запуска бота должна быть ЗДЕСЬ
+application.run_polling(allowed_updates=Update.ALL_TYPES)
     logger.info("Бот остановлен.")
     
     save_bot_status()
