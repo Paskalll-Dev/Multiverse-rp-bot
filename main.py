@@ -4087,10 +4087,10 @@ def main() -> None:
 
     logger.info("Бот запущен...")
     logger.info("Ожидание завершения старого процесса...")
-time.sleep(45)  # Ждем 45 секунд
+    time.sleep(45)  # Ждем 45 секунд
 
-# Старая строка запуска бота должна быть ЗДЕСЬ
-application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Старая строка запуска бота должна быть ЗДЕСЬ
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
     logger.info("Бот остановлен.")
     
     save_bot_status()
