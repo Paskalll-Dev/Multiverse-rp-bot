@@ -319,68 +319,72 @@ def create_tables():
     Base.metadata.create_all(bind=engine)
     logger.info("Таблицы базы данных созданы или уже существуют.")
     
-    # Проверяем и добавляем недостающие колонки
-    session = SessionLocal()
-    try:
-        # Проверяем наличие колонки post_count в таблице message_stats
-        result = session.execute(text("PRAGMA table_info(message_stats)"))
-        columns = [row[1] for row in result]
-        if 'post_count' not in columns:
-            session.execute(text("ALTER TABLE message_stats ADD COLUMN post_count INTEGER DEFAULT 0"))
-            logger.info("Добавлена колонка post_count в таблицу message_stats.")
-        
-        # Проверяем наличие колонки password в таблице checks
-        result = session.execute(text("PRAGMA table_info(checks)"))
-        columns = [row[1] for row in result]
-        if 'password' not in columns:
-            session.execute(text("ALTER TABLE checks ADD COLUMN password TEXT"))
-            logger.info("Добавлена колонка password в таблице checks.")
-        
-        # Проверяем наличие колонки last_warning_sent в таблице roles
-        result = session.execute(text("PRAGMA table_info(roles)"))
-        columns = [row[1] for row in result]
-        if 'last_warning_sent' not in columns:
-            session.execute(text("ALTER TABLE roles ADD COLUMN last_warning_sent DATE"))
-            logger.info("Добавлена колонка last_warning_sent в таблице roles.")
-        
-        # Проверяем наличие колонки anketa_content в таблице anketa_requests
-        result = session.execute(text("PRAGMA table_info(anketa_requests)"))
-        columns = [row[1] for row in result]
-        if 'anketa_content' not in columns:
-            session.execute(text("ALTER TABLE anketa_requests ADD COLUMN anketa_content TEXT"))
-            logger.info("Добавлена колонка anketa_content в таблице anketa_requests.")
-        
-        # Проверяем наличие колонки content в таблице posts
-        result = session.execute(text("PRAGMA table_info(posts)"))
-        columns = [row[1] for row in result]
-        if 'content' not in columns:
-            session.execute(text("ALTER TABLE posts ADD COLUMN content TEXT"))
-            logger.info("Добавлена колонка content в таблице posts.")
+    # Проверяем и добавляем недостающие колонки (только для SQLite)
+    # Для PostgreSQL эти проверки не нужны и вызывают ошибку
+    if not DATABASE_URL or 'postgresql' not in DATABASE_URL:
+        session = SessionLocal()
+        try:
+            # Проверяем наличие колонки post_count в таблице message_stats
+            result = session.execute(text("PRAGMA table_info(message_stats)"))
+            columns = [row[1] for row in result]
+            if 'post_count' not in columns:
+                session.execute(text("ALTER TABLE message_stats ADD COLUMN post_count INTEGER DEFAULT 0"))
+                logger.info("Добавлена колонка post_count в таблицу message_stats.")
             
-        # Меняем название колонки is_spisochnik на is_anketnik если она существует
-        result = session.execute(text("PRAGMA table_info(users)"))
-        columns = [row[1] for row in result]
-        if 'is_spisochnik' in columns:
-            # Создаем временную таблицу
-            session.execute(text("""
-                CREATE TABLE users_new AS 
-                SELECT 
-                    id, username, on_balance, op_balance, status_rp, unique_code,
-                    is_developer,
-                    CASE WHEN is_spisochnik = 1 OR is_developer = 1 THEN 1 ELSE 0 END as is_anketnik,
-                    is_moderator, is_banned, nagrads_enabled, show_nagrads_in_profile
-                FROM users
-            """))
-            session.execute(text("DROP TABLE users"))
-            session.execute(text("ALTER TABLE users_new RENAME TO users"))
-            logger.info("Переименована колонка is_spisochnik в is_anketnik")
-        
-        session.commit()
-    except Exception as e:
-        logger.error(f"Ошибка при проверке/добавлении колонок: {e}")
-        session.rollback()
-    finally:
-        session.close()
+            # Проверяем наличие колонки password в таблице checks
+            result = session.execute(text("PRAGMA table_info(checks)"))
+            columns = [row[1] for row in result]
+            if 'password' not in columns:
+                session.execute(text("ALTER TABLE checks ADD COLUMN password TEXT"))
+                logger.info("Добавлена колонка password в таблице checks.")
+            
+            # Проверяем наличие колонки last_warning_sent в таблице roles
+            result = session.execute(text("PRAGMA table_info(roles)"))
+            columns = [row[1] for row in result]
+            if 'last_warning_sent' not in columns:
+                session.execute(text("ALTER TABLE roles ADD COLUMN last_warning_sent DATE"))
+                logger.info("Добавлена колонка last_warning_sent в таблице roles.")
+            
+            # Проверяем наличие колонки anketa_content в таблице anketa_requests
+            result = session.execute(text("PRAGMA table_info(anketa_requests)"))
+            columns = [row[1] for row in result]
+            if 'anketa_content' not in columns:
+                session.execute(text("ALTER TABLE anketa_requests ADD COLUMN anketa_content TEXT"))
+                logger.info("Добавлена колонка anketa_content в таблице anketa_requests.")
+            
+            # Проверяем наличие колонки content в таблице posts
+            result = session.execute(text("PRAGMA table_info(posts)"))
+            columns = [row[1] for row in result]
+            if 'content' not in columns:
+                session.execute(text("ALTER TABLE posts ADD COLUMN content TEXT"))
+                logger.info("Добавлена колонка content в таблице posts.")
+                
+            # Меняем название колонки is_spisochnik на is_anketnik если она существует
+            result = session.execute(text("PRAGMA table_info(users)"))
+            columns = [row[1] for row in result]
+            if 'is_spisochnik' in columns:
+                # Создаем временную таблицу
+                session.execute(text("""
+                    CREATE TABLE users_new AS 
+                    SELECT 
+                        id, username, on_balance, op_balance, status_rp, unique_code,
+                        is_developer,
+                        CASE WHEN is_spisochnik = 1 OR is_developer = 1 THEN 1 ELSE 0 END as is_anketnik,
+                        is_moderator, is_banned, nagrads_enabled, show_nagrads_in_profile
+                    FROM users
+                """))
+                session.execute(text("DROP TABLE users"))
+                session.execute(text("ALTER TABLE users_new RENAME TO users"))
+                logger.info("Переименована колонка is_spisochnik в is_anketnik")
+            
+            session.commit()
+        except Exception as e:
+            logger.error(f"Ошибка при проверке/добавлении колонок: {e}")
+            session.rollback()
+        finally:
+            session.close()
+    else:
+        logger.info("Проверка колонок пропущена (используется PostgreSQL)")
 
 def get_session():
     db = SessionLocal()
