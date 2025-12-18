@@ -80,8 +80,8 @@ def save_bot_status():
 (
     STATE_SUPPORT_MESSAGE,
     STATE_SUPPORT_REPLY,
-    STATE_SOLOR_MESSAGE,
-    STATE_SOLOR_ROLES,
+    STATE_PLAYERBOARD_MESSAGE,
+    STATE_PLAYERBOARD_ROLES,
     STATE_ADD_NAGRAD_NAME,
     STATE_ADD_NAGRAD_DESCRIPTION,
     STATE_ADD_NAGRAD_PHOTO,
@@ -165,7 +165,7 @@ class User(Base):
     
     roles = relationship("Role", back_populates="user", cascade="all, delete-orphan")
     created_checks = relationship("Check", back_populates="creator", cascade="all, delete-orphan")
-    solor_entries = relationship("SolorBoardEntry", back_populates="user", cascade="all, delete-orphan")
+    playerboard_entries = relationship("PlayerBoardEntry", back_populates="user", cascade="all, delete-orphan")
     message_stats = relationship("MessageStat", back_populates="user", uselist=False, cascade="all, delete-orphan")
     user_nagrads = relationship("UserNagrad", back_populates="user", foreign_keys="UserNagrad.user_id", cascade="all, delete-orphan")
     given_nagrads = relationship("UserNagrad", back_populates="given_by", foreign_keys="UserNagrad.given_by_id")
@@ -207,15 +207,15 @@ class Check(Base):
     def is_active(self):
         return self.current_uses < self.max_uses
 
-class SolorBoardEntry(Base):
-    __tablename__ = "solor_board_entries"
+class PlayerBoardEntry(Base):
+    __tablename__ = "player_board_entries"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     message = Column(Text)
     roles_needed = Column(StringList)
     created_at = Column(DateTime, default=datetime.datetime.now)
 
-    user = relationship("User", back_populates="solor_entries")
+    user = relationship("User", back_populates="playerboard_entries")
 
 class MessageStat(Base):
     __tablename__ = "message_stats"
@@ -779,7 +779,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> 
         ],
         [
             InlineKeyboardButton("Поддержка", callback_data="support_dialog"),
-            InlineKeyboardButton("СолорБоард", callback_data="solorboard_list")
+            InlineKeyboardButton("PLAYERBOARD", callback_data="playerboard_list")
         ],
         [
             InlineKeyboardButton("Ссылки", callback_data="links"),
@@ -821,7 +821,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
 /help - Показать это сообщение.
 /profile [username/ID] - Показать информацию о профиле.
 /support - Написать сообщение в поддержку.
-/solorboard - Посмотреть или создать объявление для поиска сорола.
+/playerboard - Посмотреть или создать объявление для поиска партнера.
 /links - Список полезных ссылок.
 /checknagrad [юзернейм или уникальный код участника] - Посмотреть свои награды или награды другого пользователя.
 /sellnagrad [название_награды/код_награды] - Продать свою награду за ОН.
@@ -840,7 +840,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
 /Nagrada [код награды] - Показать детали конкретной выданной награды.
 /CheckRole [название роли/хэштег] - Проверить статус роли.
 /sendanketa - Подать анкету на персонажа.
-/deletesolorb [номер] - Удалить свою запись с СолорБоарда.
+/deleteplayerboard [номер] - Удалить свою запись с PLAYERBOARD.
 /Info - Показать информацию INFO.
 /InfoON - Подписаться на рассылку INFO.
 /InfoOFF - Отписаться от рассылку INFO.
@@ -1537,9 +1537,9 @@ async def reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session
 
 @db_session
 @not_banned
-async def delete_solor_board_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+async def delete_playerboard_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     if len(context.args) < 1:
-        await update.message.reply_text("Использование: /deletesolorb [номер_записи]")
+        await update.message.reply_text("Использование: /deleteplayerboard [номер_записи]")
         return
     
     try:
@@ -1548,7 +1548,7 @@ async def delete_solor_board_entry(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("Номер записи должен быть числом.")
         return
     
-    entry = session.query(SolorBoardEntry).filter(SolorBoardEntry.id == entry_id).first()
+    entry = session.query(PlayerBoardEntry).filter(PlayerBoardEntry.id == entry_id).first()
     if not entry:
         await update.message.reply_text(f"Запись с номером {entry_id} не найдена.")
         return
@@ -1561,7 +1561,7 @@ async def delete_solor_board_entry(update: Update, context: ContextTypes.DEFAULT
         return
     
     session.delete(entry)
-    await update.message.reply_text(f"Запись #{entry_id} успешно удалена с СолорБоарда.")
+    await update.message.reply_text(f"Запись #{entry_id} успешно удалена с PLAYERBOARD.")
     
     if user_db.id != entry.user_id:
         try:
@@ -1569,7 +1569,7 @@ async def delete_solor_board_entry(update: Update, context: ContextTypes.DEFAULT
             if creator:
                 await context.bot.send_message(
                     chat_id=creator.id,
-                    text=f"Ваша запись на СолорБоарде (ID: {entry_id}) была удалена администратором @{user_tg.username or user_tg.id}."
+                    text=f"Ваша запись на PLAYERBOARD (ID: {entry_id}) была удалена администратором @{user_tg.username or user_tg.id}."
                 )
         except TelegramError as e:
             logger.warning(f"Не удалось уведомить создателя записи {entry.user_id}: {e}")
@@ -1622,7 +1622,7 @@ async def send_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 Шаблон анкеты для взятия персонажа из фд:
 1. Имя персонаша.
 2. Вселенная персонажа.
-3. Способности персонажа.
+3. Способности персонаша.
 4. Какую роль вы меняете (если меняете).
 
 Шаблон анкеты для взятия ОСА (СВОЕГО ПРИДУМАННОГО ПЕРСОНАЖА):
@@ -1677,7 +1677,8 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
         status="pending"
     )
     session.add(new_anketa)
-    session.flush()
+    session.commit()
+    session.refresh(new_anketa)
 
     keyboard = [
         [
@@ -1705,6 +1706,7 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 
                 new_anketa.admin_message_id = admin_message.message_id
                 new_anketa.admin_chat_id = admin_message.chat_id
+                session.commit()
                 
                 for item in anketa_content_list:
                     try:
@@ -2028,8 +2030,10 @@ async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE, se
         message_content = {'type': 'video', 'file_id': update.message.video.file_id, 'caption': update.message.caption}
     elif update.message.animation:
         message_content = {'type': 'animation', 'file_id': update.message.animation.file_id, 'caption': update.message.caption}
+    elif update.message.document:
+        message_content = {'type': 'document', 'file_id': update.message.document.file_id, 'caption': update.message.caption}
     else:
-        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео или гифки для поддержки.")
+        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео, документы или гифки для поддержки.")
         return STATE_SUPPORT_MESSAGE
 
     context.user_data['support_buffer'].append(message_content)
@@ -2091,21 +2095,28 @@ async def done_support_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE
                         await context.bot.send_photo(
                             chat_id=chat_id,
                             photo=item['file_id'],
-                            caption=item['caption'],
+                            caption=item.get('caption', ''),
                             reply_to_message_id=admin_message.message_id
                         )
                     elif item['type'] == 'video':
                         await context.bot.send_video(
                             chat_id=chat_id,
                             video=item['file_id'],
-                            caption=item['caption'],
+                            caption=item.get('caption', ''),
                             reply_to_message_id=admin_message.message_id
                         )
                     elif item['type'] == 'animation':
                         await context.bot.send_animation(
                             chat_id=chat_id,
                             animation=item['file_id'],
-                            caption=item['caption'],
+                            caption=item.get('caption', ''),
+                            reply_to_message_id=admin_message.message_id
+                        )
+                    elif item['type'] == 'document':
+                        await context.bot.send_document(
+                            chat_id=chat_id,
+                            document=item['file_id'],
+                            caption=item.get('caption', ''),
                             reply_to_message_id=admin_message.message_id
                         )
                 except TelegramError as e:
@@ -2428,6 +2439,8 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
             )
             with open("log.txt", "a", encoding="utf-8") as f:
                 f.write(log_entry)
+    
+    session.commit()
 
 @db_session
 @moderator_or_developer_only
@@ -2557,17 +2570,17 @@ async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE)
 
 @db_session
 @not_banned
-async def solor_board_list(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    entries = session.query(SolorBoardEntry).order_by(SolorBoardEntry.created_at.desc()).limit(10).all()
+async def playerboard_list(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+    entries = session.query(PlayerBoardEntry).order_by(PlayerBoardEntry.created_at.desc()).limit(10).all()
     
     if not entries:
-        message_text = "СолорБоард пуст. Будьте первым, кто ищет сорола!"
+        message_text = "PLAYERBOARD пуст. Будьте первым, кто ищет партнера!"
         keyboard = [
-            [InlineKeyboardButton("Создать запись", callback_data="solorboard_create")],
+            [InlineKeyboardButton("Создать запись", callback_data="playerboard_create")],
             [InlineKeyboardButton("На главную", callback_data="start")]
         ]
     else:
-        message_text = "Актуальные записи на СолорБоарде:\n\n"
+        message_text = "Актуальные записи на PLAYERBOARD:\n\n"
         keyboard_entries = []
         for i, entry in enumerate(entries):
             user = session.query(User).filter(User.id == entry.user_id).first()
@@ -2585,12 +2598,12 @@ async def solor_board_list(update: Update, context: ContextTypes.DEFAULT_TYPE, s
                 message_text += f"   Ищет роли: {roles_str}\n"
             else:
                 message_text += f"   Ищет роли: Не указаны\n"
-            message_text += f"   [Связаться: /solor_contact_{entry.user_id}]\n\n"
+            message_text += f"   [Связаться: /player_contact_{entry.user_id}]\n\n"
             
-            keyboard_entries.append([InlineKeyboardButton(f"Пригласить на РП {i+1} человека из списка", callback_data=f"solor_invite_{entry.id}")])
+            keyboard_entries.append([InlineKeyboardButton(f"Пригласить на РП {i+1} человека из списка", callback_data=f"player_invite_{entry.id}")])
         
         keyboard = keyboard_entries + [
-            [InlineKeyboardButton("Создать запись", callback_data="solorboard_create")],
+            [InlineKeyboardButton("Создать запись", callback_data="playerboard_create")],
             [InlineKeyboardButton("На главную", callback_data="start")]
         ]
 
@@ -2606,7 +2619,7 @@ async def solor_board_list(update: Update, context: ContextTypes.DEFAULT_TYPE, s
             )
             await update.callback_query.answer()
         except TelegramError as e:
-            logger.warning(f"Failed to edit message for solorboard_list callback query: {e}. Falling back to reply_text.")
+            logger.warning(f"Failed to edit message for playerboard_list callback query: {e}. Falling back to reply_text.")
             await message_source.reply_text(
                 text=message_text,
                 reply_markup=reply_markup
@@ -2619,30 +2632,30 @@ async def solor_board_list(update: Update, context: ContextTypes.DEFAULT_TYPE, s
 
 @db_session_for_conversation
 @not_banned
-async def start_solor_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+async def start_player_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
     message_source = update.callback_query.message if update.callback_query else update.message
     await message_source.reply_text(
-        "Начнем создание записи для СолорБоарда. Введите ваше сообщение для объявления (например, 'Ищу сорола для темной фентези'):"
+        "Начнем создание записи для PLAYERBOARD. Введите ваше сообщение для объявления (например, 'Ищу партнера для темной фентези'):"
     )
     if update.callback_query:
-        await update.callback_query.answer("Начинается создание записи на СолорБоард.")
+        await update.callback_query.answer("Начинается создание записи на PLAYERBOARD.")
     
-    context.user_data['solor_data'] = {}
-    return STATE_SOLOR_MESSAGE
+    context.user_data['player_data'] = {}
+    return STATE_PLAYERBOARD_MESSAGE
 
 @db_session_for_conversation
-async def solor_message_step(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+async def player_message_step(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
     message_text = update.message.text.strip()
     if not message_text:
         await update.message.reply_text("Сообщение не может быть пустым. Пожалуйста, введите ваше объявление.")
-        return STATE_SOLOR_MESSAGE
+        return STATE_PLAYERBOARD_MESSAGE
     
-    context.user_data['solor_data']['message'] = message_text
+    context.user_data['player_data']['message'] = message_text
     await update.message.reply_text("Отлично! Теперь укажите через запятую хэштеги ролей, которые вы ищете (например, #Маг, #Воин). Если роли не важны, напишите 'нет':")
-    return STATE_SOLOR_ROLES
+    return STATE_PLAYERBOARD_ROLES
 
 @db_session_for_conversation
-async def solor_roles_step(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+async def player_roles_step(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
     roles_input = update.message.text.strip()
     roles_needed = []
     if roles_input.lower() != 'нет':
@@ -2655,22 +2668,22 @@ async def solor_roles_step(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     user_tg = update.effective_user
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
 
-    new_solor_entry = SolorBoardEntry(
+    new_player_entry = PlayerBoardEntry(
         user=user_db,
-        message=context.user_data['solor_data']['message'],
+        message=context.user_data['player_data']['message'],
         roles_needed=roles_needed
     )
-    session.add(new_solor_entry)
+    session.add(new_player_entry)
     
-    await update.message.reply_text("Ваша запись на СолорБоарде успешно создана! Она будет видна в списке.")
-    context.user_data.pop('solor_data')
+    await update.message.reply_text("Ваша запись на PLAYERBOARD успешно создана! Она будет видна в списке.")
+    context.user_data.pop('player_data')
     return ConversationHandler.END
 
 @db_session
 @not_banned
-async def solor_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+async def player_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     if not context.matches:
-        await update.message.reply_text("Ошибка в команде. Используйте формат /solor_contact_[ID пользователя].")
+        await update.message.reply_text("Ошибка в команде. Используйте формат /player_contact_[ID пользователя].")
         return
 
     match = context.matches[0]
@@ -2694,7 +2707,7 @@ async def solor_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, sess
         await update.message.reply_text("Вы пытаетесь связаться с самим собой.")
         return
 
-    message_text = f"Пользователь @{sender_tg.username or sender_tg.id} заинтересовался вашим объявлением на СолорБоарде и хочет связаться с вами!\n\n"
+    message_text = f"Пользователь @{sender_tg.username or sender_tg.id} заинтересовался вашим объявлением на PLAYERBOARD и хочет связаться с вами!\n\n"
     if sender_tg.username:
         message_text += f"Вы можете написать ему в личку: https://t.me/{sender_tg.username}"
     else:
@@ -2709,7 +2722,7 @@ async def solor_contact(update: Update, context: ContextTypes.DEFAULT_TYPE, sess
 
 @db_session_for_conversation
 @not_banned
-async def handle_solor_invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+async def handle_player_invite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     query = update.callback_query
     await query.answer()
     
@@ -2718,9 +2731,9 @@ async def handle_solor_invite_callback(update: Update, context: ContextTypes.DEF
     entry_id = int(parts[2])
     inviter_id = query.from_user.id
 
-    entry = session.query(SolorBoardEntry).filter(SolorBoardEntry.id == entry_id).first()
+    entry = session.query(PlayerBoardEntry).filter(PlayerBoardEntry.id == entry_id).first()
     if not entry:
-        await query.message.reply_text("Эта запись на СолорБоарде больше не существует.")
+        await query.message.reply_text("Эта запись на PLAYERBOARD больше не существует.")
         return
     
     entry_owner_db = session.query(User).filter(User.id == entry.user_id).first()
@@ -2735,20 +2748,20 @@ async def handle_solor_invite_callback(update: Update, context: ContextTypes.DEF
         await query.message.reply_text("Вы не можете пригласить самого себя на РП.")
         return
 
-    context.user_data[f'solor_invite_message_id_{entry_id}_{inviter_id}'] = query.message.message_id
-    context.user_data[f'solor_invite_chat_id_{entry_id}_{inviter_id}'] = query.message.chat_id
+    context.user_data[f'player_invite_message_id_{entry_id}_{inviter_id}'] = query.message.message_id
+    context.user_data[f'player_invite_chat_id_{entry_id}_{inviter_id}'] = query.message.chat_id
 
     owner_keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("Согласиться на РП", callback_data=f"solor_accept_{inviter_id}_{entry_id}"),
-            InlineKeyboardButton("Отказаться от РП", callback_data=f"solor_decline_{inviter_id}_{entry_id}")
+            InlineKeyboardButton("Согласиться на РП", callback_data=f"player_accept_{inviter_id}_{entry_id}"),
+            InlineKeyboardButton("Отказаться от РП", callback_data=f"player_decline_{inviter_id}_{entry_id}")
         ]
     ])
     try:
         await context.bot.send_message(
             chat_id=entry_owner_db.id,
             text=f"Пользователь @{inviter_tg.username or inviter_tg.id} хочет поролить с вами!\n"
-                 f"Его сообщение на СолорБоарде: {entry.message}\n\n"
+                 f"Его сообщение на PLAYERBOARD: {entry.message}\n\n"
                  f"Вы согласны?",
             reply_markup=owner_keyboard
         )
@@ -2759,7 +2772,7 @@ async def handle_solor_invite_callback(update: Update, context: ContextTypes.DEF
 
 @db_session_for_conversation
 @not_banned
-async def handle_solor_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+async def handle_player_accept_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     query = update.callback_query
     await query.answer()
 
@@ -2771,9 +2784,9 @@ async def handle_solor_accept_callback(update: Update, context: ContextTypes.DEF
     entry_owner_tg = query.from_user
     entry_owner_db = get_or_create_user(session, entry_owner_tg.id, entry_owner_tg.username)
 
-    entry = session.query(SolorBoardEntry).filter(SolorBoardEntry.id == entry_id).first()
+    entry = session.query(PlayerBoardEntry).filter(PlayerBoardEntry.id == entry_id).first()
     if not entry:
-        await query.message.reply_text("Эта запись на СолорБоарде уже не существует.")
+        await query.message.reply_text("Эта запись на PLAYERBOARD уже не существует.")
         return
 
     session.delete(entry)
@@ -2796,12 +2809,12 @@ async def handle_solor_accept_callback(update: Update, context: ContextTypes.DEF
     except TelegramError as e:
         logger.warning(f"Failed to edit owner's message after accepting: {e}")
 
-    context.user_data.pop(f'solor_invite_message_id_{entry_id}_{inviter_id}', None)
-    context.user_data.pop(f'solor_invite_chat_id_{entry_id}_{inviter_id}', None)
+    context.user_data.pop(f'player_invite_message_id_{entry_id}_{inviter_id}', None)
+    context.user_data.pop(f'player_invite_chat_id_{entry_id}_{inviter_id}', None)
 
 @db_session_for_conversation
 @not_banned
-async def handle_solor_decline_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+async def handle_player_decline_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     query = update.callback_query
     await query.answer()
 
@@ -2813,7 +2826,7 @@ async def handle_solor_decline_callback(update: Update, context: ContextTypes.DE
     entry_owner_tg = query.from_user
     entry_owner_db = get_or_create_user(session, entry_owner_tg.id, entry_owner_tg.username)
 
-    entry = session.query(SolorBoardEntry).filter(SolorBoardEntry.id == entry_id).first()
+    entry = session.query(PlayerBoardEntry).filter(PlayerBoardEntry.id == entry_id).first()
     
     inviter_db = session.query(User).filter(User.id == inviter_id).first()
 
@@ -2821,20 +2834,20 @@ async def handle_solor_decline_callback(update: Update, context: ContextTypes.DE
         try:
             await context.bot.send_message(
                 chat_id=inviter_db.id,
-                text=f"Создатель поста @{entry_owner_db.username or entry_owner_db.id} отказался от РП с вами. Его запись останется на СолорБоарде."
+                text=f"Создатель поста @{entry_owner_db.username or entry_owner_db.id} отказался от РП с вами. Его запись останется на PLAYERBOARD."
             )
         except TelegramError as e:
             logger.warning(f"Не удалось уведомить пригласившего пользователя {inviter_db.id} об отказе: {e}")
 
     try:
         await query.edit_message_text(
-            text=f"Вы отказались от РП с @{inviter_db.username or inviter_db.id}. Ваша запись останется на СолорБоарде."
+            text=f"Вы отказались от РП с @{inviter_db.username or inviter_db.id}. Ваша запись останется на PLAYERBOARD."
         )
     except TelegramError as e:
         logger.warning(f"Failed to edit owner's message after declining: {e}")
     
-    context.user_data.pop(f'solor_invite_message_id_{entry_id}_{inviter_id}', None)
-    context.user_data.pop(f'solor_invite_chat_id_{entry_id}_{inviter_id}', None)
+    context.user_data.pop(f'player_invite_message_id_{entry_id}_{inviter_id}', None)
+    context.user_data.pop(f'player_invite_chat_id_{entry_id}_{inviter_id}', None)
 
 @db_session
 @developer_only
@@ -2909,6 +2922,15 @@ async def add_role_mass(update: Update, context: ContextTypes.DEFAULT_TYPE, sess
             hashtag=hashtag
         )
         session.add(new_role)
+        
+        try:
+            await context.bot.send_message(
+                chat_id=user_db.id,
+                text=f"Администратор @{update.effective_user.username or update.effective_user.id} выдал вам роль: {role_name} (#{hashtag})"
+            )
+        except TelegramError as e:
+            logger.warning(f"Не удалось уведомить пользователя {user_db.id} о выдаче роли: {e}")
+        
         results.append(f"Пользователю @{user_db.username or user_db.id} выдана роль {role_name} (#{hashtag})")
     
     report = "Результат выдачи ролей:\n"
@@ -2918,6 +2940,8 @@ async def add_role_mass(update: Update, context: ContextTypes.DEFAULT_TYPE, sess
         report += "\nОшибки:\n" + "\n".join(errors)
     
     await update.message.reply_text(report)
+    
+    session.commit()
 
 @db_session
 @moderator_or_developer_only
@@ -3581,8 +3605,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         await help_command(update, context)
     elif data == "profile":
         await profile(update, context)
-    elif data == "solorboard_list":
-        await solor_board_list(update, context)
+    elif data == "playerboard_list":
+        await playerboard_list(update, context)
     elif data == "links":
         await links(update, context)
     elif data == "newbie_info":
@@ -3593,8 +3617,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         await send_anketa_callback(update, context)
     elif data == "support_dialog":
         await start_support_dialog(update, context)
-    elif data == "solorboard_create":
-        await start_solor_dialog(update, context)
+    elif data == "playerboard_create":
+        await start_player_dialog(update, context)
     elif data == "info_command":
         await info_command(update, context)
     elif data == "none":
@@ -3662,7 +3686,7 @@ def main() -> None:
             CallbackQueryHandler(send_anketa_callback, pattern="^send_anketa_callback$"),
         ],
         states={
-            STATE_ANKETA_MESSAGE: [MessageHandler(filters.ALL & ~filters.COMMAND & allowed_chats_filter, anketa_message)],
+            STATE_ANKETA_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND & allowed_chats_filter, anketa_message)],
         },
         fallbacks=[
             CommandHandler("done_anketa", done_anketa_dialog, filters=allowed_chats_filter),
@@ -3730,15 +3754,15 @@ def main() -> None:
     )
     application.add_handler(support_conversation)
 
-    solor_board_conversation = ConversationHandler(
+    playerboard_conversation = ConversationHandler(
         entry_points=[
-            CommandHandler("solorboard", solor_board_list, filters=allowed_chats_filter),
-            CallbackQueryHandler(solor_board_list, pattern="^solorboard_list$"),
-            CallbackQueryHandler(start_solor_dialog, pattern="^solorboard_create$"),
+            CommandHandler("playerboard", playerboard_list, filters=allowed_chats_filter),
+            CallbackQueryHandler(playerboard_list, pattern="^playerboard_list$"),
+            CallbackQueryHandler(start_player_dialog, pattern="^playerboard_create$"),
         ],
         states={
-            STATE_SOLOR_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND & allowed_chats_filter, solor_message_step)],
-            STATE_SOLOR_ROLES: [MessageHandler(filters.TEXT & ~filters.COMMAND & allowed_chats_filter, solor_roles_step)],
+            STATE_PLAYERBOARD_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND & allowed_chats_filter, player_message_step)],
+            STATE_PLAYERBOARD_ROLES: [MessageHandler(filters.TEXT & ~filters.COMMAND & allowed_chats_filter, player_roles_step)],
         },
         fallbacks=[
             CommandHandler("start", start, filters=allowed_chats_filter),
@@ -3746,7 +3770,7 @@ def main() -> None:
         ],
         allow_reentry=True
     )
-    application.add_handler(solor_board_conversation)
+    application.add_handler(playerboard_conversation)
 
     send_info_conversation = ConversationHandler(
         entry_points=[
@@ -3780,7 +3804,7 @@ def main() -> None:
     
     application.add_handler(CommandHandler("delete", delete_role, filters=allowed_chats_filter))
     
-    application.add_handler(CommandHandler("deletesolorb", delete_solor_board_entry, filters=allowed_chats_filter))
+    application.add_handler(CommandHandler("deleteplayerboard", delete_playerboard_entry, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("checkpost", check_post_stats, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("CheckRole", check_role, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("reset", reset_user, filters=allowed_chats_filter))
@@ -3814,19 +3838,19 @@ def main() -> None:
     application.add_handler(CommandHandler("qyqyqs", qyqyqs, filters=allowed_chats_filter))
 
     application.add_handler(MessageHandler(
-        filters.Regex(r"^/solor_contact_(\d+)$") & allowed_chats_filter,
-        solor_contact
+        filters.Regex(r"^/player_contact_(\d+)$") & allowed_chats_filter,
+        player_contact
     ))
 
     application.add_handler(CallbackQueryHandler(handle_anketa_callback, pattern="^anketa_"))
     application.add_handler(CallbackQueryHandler(handle_support_callback, pattern="^support_end_dialog_"))
-    application.add_handler(CallbackQueryHandler(handle_solor_invite_callback, pattern="^solor_invite_"))
-    application.add_handler(CallbackQueryHandler(handle_solor_accept_callback, pattern="^solor_accept_"))
-    application.add_handler(CallbackQueryHandler(handle_solor_decline_callback, pattern="^solor_decline_"))
+    application.add_handler(CallbackQueryHandler(handle_player_invite_callback, pattern="^player_invite_"))
+    application.add_handler(CallbackQueryHandler(handle_player_accept_callback, pattern="^player_accept_"))
+    application.add_handler(CallbackQueryHandler(handle_player_decline_callback, pattern="^player_decline_"))
 
     application.add_handler(CallbackQueryHandler(
         button_handler,
-        pattern="^(?!support_reply_|support_end_dialog_|solor_invite_|solor_accept_|solor_decline_|anketa_).*$"
+        pattern="^(?!support_reply_|support_end_dialog_|player_invite_|player_accept_|player_decline_|anketa_).*$"
     ))
 
     application.add_handler(MessageHandler(
