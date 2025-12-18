@@ -153,7 +153,7 @@ class StringList(TypeDecorator):
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
     username = Column(String, index=True)
     on_balance = Column(Integer, default=0)
     op_balance = Column(Integer, default=0)
@@ -182,8 +182,8 @@ class User(Base):
 
 class Role(Base):
     __tablename__ = "roles"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
-    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"))
     name = Column(String)
     hashtag = Column(String, index=True)
     last_active = Column(Date, default=datetime.date.today)
@@ -193,8 +193,8 @@ class Role(Base):
 
 class Check(Base):
     __tablename__ = "checks"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
-    creator_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
+    creator_id = Column(BigInteger, ForeignKey("users.id"))
     amount = Column(Integer)
     currency = Column(String, default="ON")
     description = Column(String, nullable=True)
@@ -212,8 +212,8 @@ class Check(Base):
 
 class PlayerBoardEntry(Base):
     __tablename__ = "player_board_entries"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
-    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"))
     message = Column(Text)
     roles_needed = Column(StringList)
     created_at = Column(DateTime, default=datetime.datetime.now)
@@ -222,8 +222,8 @@ class PlayerBoardEntry(Base):
 
 class MessageStat(Base):
     __tablename__ = "message_stats"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
-    user_id = Column(BigInteger, ForeignKey("users.id"), unique=True)  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), unique=True)
     message_count = Column(Integer, default=0)
     post_count = Column(Integer, default=0)
     last_updated = Column(DateTime, default=datetime.datetime.now)
@@ -232,7 +232,7 @@ class MessageStat(Base):
 
 class NagradDefinition(Base):
     __tablename__ = "nagrad_definitions"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
     description = Column(Text, nullable=True)
     photo_file_id = Column(String, nullable=True)
@@ -242,12 +242,12 @@ class NagradDefinition(Base):
 
 class UserNagrad(Base):
     __tablename__ = "user_nagrads"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
-    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
-    nagrad_definition_id = Column(BigInteger, ForeignKey("nagrad_definitions.id"))  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"))
+    nagrad_definition_id = Column(BigInteger, ForeignKey("nagrad_definitions.id"))
     unique_code = Column(String, unique=True, index=True, default=lambda: str(uuid.uuid4())[:8])
     created_at = Column(DateTime, default=datetime.datetime.now)
-    given_by_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)  # Изменено с Integer на BigInteger
+    given_by_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
 
     user = relationship("User", back_populates="user_nagrads", foreign_keys=[user_id])
     definition = relationship("NagradDefinition", back_populates="user_nagrads")
@@ -255,8 +255,8 @@ class UserNagrad(Base):
 
 class SupportRequest(Base):
     __tablename__ = "support_requests"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
-    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"))
     request_content = Column(StringList)
     status = Column(String, default="open")
     created_at = Column(DateTime, default=datetime.datetime.now)
@@ -266,8 +266,8 @@ class SupportRequest(Base):
 
 class Post(Base):
     __tablename__ = "posts"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
-    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"))
     content = Column(Text)
     hashtag = Column(String, index=True)
     created_at = Column(DateTime, default=datetime.datetime.now)
@@ -278,8 +278,8 @@ class Post(Base):
 
 class AnketaRequest(Base):
     __tablename__ = "anketa_requests"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
-    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"))
     anketa_content = Column(StringList)
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.datetime.now)
@@ -290,8 +290,8 @@ class AnketaRequest(Base):
 
 class InfoSubscription(Base):
     __tablename__ = "info_subscriptions"
-    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
-    user_id = Column(BigInteger, ForeignKey("users.id"), unique=True)  # Изменено с Integer на BigInteger
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), unique=True)
     subscribed = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="info_subscriptions")
@@ -1765,13 +1765,13 @@ async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
     if update.message.text:
         message_content = {'type': 'text', 'content': update.message.text}
     elif update.message.photo:
-        message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption}
+        message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption or ''}
     elif update.message.video:
-        message_content = {'type': 'video', 'file_id': update.message.video.file_id, 'caption': update.message.caption}
+        message_content = {'type': 'video', 'file_id': update.message.video.file_id, 'caption': update.message.caption or ''}
     elif update.message.animation:
-        message_content = {'type': 'animation', 'file_id': update.message.animation.file_id, 'caption': update.message.caption}
+        message_content = {'type': 'animation', 'file_id': update.message.animation.file_id, 'caption': update.message.caption or ''}
     elif update.message.document:
-        message_content = {'type': 'document', 'file_id': update.message.document.file_id, 'caption': update.message.caption}
+        message_content = {'type': 'document', 'file_id': update.message.document.file_id, 'caption': update.message.caption or ''}
     else:
         await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео, документы или гифки для анкеты.")
         return STATE_ANKETA_MESSAGE
@@ -1790,9 +1790,10 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_text("Вы не отправили ни одного сообщения для анкеты. Запрос отменен.")
         return ConversationHandler.END
 
+    # Сохраняем как JSON строку
     new_anketa = AnketaRequest(
         user=user_db,
-        anketa_content=anketa_content_list,
+        anketa_content=anketa_content_list,  # StringList автоматически сериализует в JSON
         status="pending"
     )
     session.add(new_anketa)
@@ -1865,6 +1866,50 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await update.message.reply_text("Ваша анкета отправлена на рассмотрение. Ожидайте решения.")
     return ConversationHandler.END
 
+async def send_to_channel_with_retry(context, chat_id, text=None, photo=None, video=None, animation=None, document=None, caption=None, max_retries=3):
+    """Отправка сообщения в канал с повторными попытками"""
+    for attempt in range(max_retries):
+        try:
+            if photo:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo,
+                    caption=caption
+                )
+            elif video:
+                await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=video,
+                    caption=caption
+                )
+            elif animation:
+                await context.bot.send_animation(
+                    chat_id=chat_id,
+                    animation=animation,
+                    caption=caption
+                )
+            elif document:
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=document,
+                    caption=caption
+                )
+            elif text:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text
+                )
+            return True
+        except TimedOut:
+            if attempt < max_retries - 1:
+                logger.warning(f"Таймаут при отправке в канал {chat_id}, попытка {attempt + 2} из {max_retries}")
+                await asyncio.sleep(2)  # Ждем 2 секунды перед повторной попыткой
+            else:
+                raise
+        except TelegramError as e:
+            raise
+    return False
+
 @db_session_for_conversation
 async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     query = update.callback_query
@@ -1885,7 +1930,15 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
     user = anketa.user
     admin_username = query.from_user.username or query.from_user.id
     
+    # Исправляем получение контента анкеты
     anketa_content = anketa.anketa_content
+    if isinstance(anketa_content, str):
+        try:
+            anketa_content = json.loads(anketa_content)
+        except json.JSONDecodeError:
+            logger.error(f"Ошибка декодирования JSON анкеты {anketa_id}")
+            await query.answer("Ошибка при обработке анкеты.")
+            return
     
     if action == "approve":
         anketa.status = "approved"
@@ -1899,53 +1952,80 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning(f"Не удалось уведомить пользователя {user.id} об одобрении анкеты: {e}")
         
         try:
-            await context.bot.send_message(
+            # Отправляем оповещение в канал
+            await send_to_channel_with_retry(
+                context=context,
                 chat_id=ANKET_CHANNEL_ID,
                 text=f"Новая анкета от @{user.username or user.id}!"
             )
             
-            for item in anketa_content:
-                if isinstance(item, dict):
-                    if item['type'] == 'text':
-                        await context.bot.send_message(
-                            chat_id=ANKET_CHANNEL_ID,
-                            text=item['content']
-                        )
-                    elif item['type'] == 'photo':
-                        caption = item.get('caption', '')
-                        await context.bot.send_photo(
-                            chat_id=ANKET_CHANNEL_ID,
-                            photo=item['file_id'],
-                            caption=caption if caption else None
-                        )
-                    elif item['type'] == 'video':
-                        caption = item.get('caption', '')
-                        await context.bot.send_video(
-                            chat_id=ANKET_CHANNEL_ID,
-                            video=item['file_id'],
-                            caption=caption if caption else None
-                        )
-                    elif item['type'] == 'animation':
-                        caption = item.get('caption', '')
-                        await context.bot.send_animation(
-                            chat_id=ANKET_CHANNEL_ID,
-                            animation=item['file_id'],
-                            caption=caption if caption else None
-                        )
-                    elif item['type'] == 'document':
-                        caption = item.get('caption', '')
-                        await context.bot.send_document(
-                            chat_id=ANKET_CHANNEL_ID,
-                            document=item['file_id'],
-                            caption=caption if caption else None
-                        )
-                else:
-                    await context.bot.send_message(
+            # Отправляем контент анкеты
+            if isinstance(anketa_content, list):
+                for item in anketa_content:
+                    try:
+                        if isinstance(item, dict):
+                            if item.get('type') == 'text':
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    text=item.get('content', '')
+                                )
+                            elif item.get('type') == 'photo':
+                                caption = item.get('caption', '')
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    photo=item.get('file_id', ''),
+                                    caption=caption if caption else None
+                                )
+                            elif item.get('type') == 'video':
+                                caption = item.get('caption', '')
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    video=item.get('file_id', ''),
+                                    caption=caption if caption else None
+                                )
+                            elif item.get('type') == 'animation':
+                                caption = item.get('caption', '')
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    animation=item.get('file_id', ''),
+                                    caption=caption if caption else None
+                                )
+                            elif item.get('type') == 'document':
+                                caption = item.get('caption', '')
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    document=item.get('file_id', ''),
+                                    caption=caption if caption else None
+                                )
+                        elif isinstance(item, str):
+                            # Если это просто строка
+                            await send_to_channel_with_retry(
+                                context=context,
+                                chat_id=ANKET_CHANNEL_ID,
+                                text=item
+                            )
+                    except TelegramError as e:
+                        logger.error(f"Не удалось отправить часть анкеты в канал: {e}")
+                        continue
+            else:
+                # Если anketa_content не список, пытаемся отправить как текст
+                try:
+                    await send_to_channel_with_retry(
+                        context=context,
                         chat_id=ANKET_CHANNEL_ID,
-                        text=item
+                        text=str(anketa_content)[:4000]  # Ограничение Telegram
                     )
+                except TelegramError as e:
+                    logger.error(f"Не удалось отправить анкету как текст: {e}")
             
-            await context.bot.send_message(
+            # Отправляем статус
+            await send_to_channel_with_retry(
+                context=context,
                 chat_id=ANKET_CHANNEL_ID,
                 text="Статус:✅"
             )
@@ -3798,6 +3878,38 @@ async def post_shutdown(application: Application) -> None:
     except Exception as e:
         logger.error(f"Не удалось отправить сообщение о выключении бота: {e}")
 
+from flask import Flask, jsonify
+import threading
+import time
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return jsonify({"status": "bot_is_running", "project": "Multiverse-RP"})
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy"})
+
+@app.route('/ping')
+def ping():
+    return "pong"
+
+def run_web_server():
+    port = int(os.getenv('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+def main_with_web():
+    logger.info("Запуск веб-сервера для Render...")
+    
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    
+    time.sleep(2)
+    
+    main()
+
 def main() -> None:
     create_tables()
     load_bot_status()
@@ -4060,38 +4172,6 @@ def main() -> None:
     logger.info("Бот остановлен.")
     
     save_bot_status()
-
-from flask import Flask, jsonify
-import threading
-import time
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return jsonify({"status": "bot_is_running", "project": "Multiverse-RP"})
-
-@app.route('/health')
-def health():
-    return jsonify({"status": "healthy"})
-
-@app.route('/ping')
-def ping():
-    return "pong"
-
-def run_web_server():
-    port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False)
-
-def main_with_web():
-    logger.info("Запуск веб-сервера для Render...")
-    
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
-    
-    time.sleep(2)
-    
-    main()
 
 if __name__ == "__main__":
     main_with_web()
