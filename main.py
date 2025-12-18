@@ -6,9 +6,6 @@ import string
 import datetime
 import asyncio
 import random
-import time
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import Literal, Optional, List, Dict, Union
 
@@ -33,8 +30,6 @@ from telegram.ext import (
     ConversationHandler,
 )
 from telegram.error import TelegramError, TimedOut
-
-from flask import Flask, request
 
 TOKEN = os.getenv('TOKEN', '8255764534:AAH6gMVaBXsctXqRUM5VujJM-O-cWKuiuRM')
 DEVELOPER_IDS = [6283690984]
@@ -848,7 +843,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
 /deletesolorb [номер] - Удалить свою запись с СолорБоарда.
 /Info - Показать информацию INFO.
 /InfoON - Подписаться на рассылку INFO.
-/InfoOFF - Отписаться от рассылки INFO.
+/InfoOFF - Отписаться от рассылку INFO.
 
 Административные команды:
 /add [@username #хэштег НазваниеРоли] - Выдать роль пользователю (можно массово через запятую).
@@ -1519,6 +1514,7 @@ async def reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     
     user_db.on_balance = 0
     user_db.op_balance = 0
+    
     user_db.status_rp = "Участник"
     
     try:
@@ -2394,33 +2390,16 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                     with open("log.txt", "a", encoding="utf-8") as f:
                         f.write(log_entry)
             else:
-                if should_log and logging_active and message_text:
-                    lines = message_text.strip().split('\n')
-                    first_lines = lines[:3]
-                    last_lines = lines[-2:] if len(lines) >= 2 else []
-                    
-                    is_post = False
-                    for line in first_lines:
-                        if line.strip().startswith('#'):
-                            is_post = True
-                            break
-                    
-                    if not is_post:
-                        for line in last_lines:
-                            if line.strip().startswith('#'):
-                                is_post = True
-                                break
-                    
-                    if not is_post:
-                        log_entry = (
-                            f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                            f"Chat ID: {update.effective_chat.id}, "
-                            f"User ID: {user_tg.id}, "
-                            f"Username: @{user_tg.username or user_tg.id}, "
-                            f"Message: {message_text[:100] or 'FILE/PHOTO'}\n"
-                        )
-                        with open("log.txt", "a", encoding="utf-8") as f:
-                            f.write(log_entry)
+                if should_log and logging_active:
+                    log_entry = (
+                        f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                        f"[NOT POST] Chat ID: {update.effective_chat.id}, "
+                        f"User ID: {user_tg.id}, "
+                        f"Username: @{user_tg.username or user_tg.id}, "
+                        f"Message: {post_text[:100] or 'FILE/PHOTO'}\n"
+                    )
+                    with open("log.txt", "a", encoding="utf-8") as f:
+                        f.write(log_entry)
     
     elif should_log and logging_active and message_text:
         lines = message_text.strip().split('\n')
@@ -3647,14 +3626,13 @@ async def post_shutdown(application: Application) -> None:
     except Exception as e:
         logger.error(f"Не удалось отправить сообщение о выключении бота: {e}")
 
-def create_application():
-    """Создает и настраивает приложение бота"""
+def main() -> None:
     create_tables()
     load_bot_status()
 
     if TOKEN == "YOUR_ACTUAL_BOT_TOKEN_HERE":
         logger.critical("ОШИБКА: Токен бота не был заменен! Работа бота приостановлена.")
-        return None
+        return
 
     application = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
 
@@ -3861,122 +3839,43 @@ def create_application():
     application.add_handler(MessageHandler(filters.ALL & filters.ChatType.PRIVATE, handle_unknown_private_message))
     application.add_handler(CallbackQueryHandler(handle_unknown_private_message))
 
-    return application
+    logger.info("Бот запущен...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("Бот остановлен.")
+    
+    save_bot_status()
 
-# Создаем Flask приложение один раз
+from flask import Flask, jsonify
+import threading
+import time
+
 app = Flask(__name__)
-
-# Глобальная переменная для хранения приложения бота
-telegram_application = None
 
 @app.route('/')
 def home():
-    return {"status": "bot_is_running", "project": "Multiverse-RP"}
+    return jsonify({"status": "bot_is_running", "project": "Multiverse-RP"})
 
 @app.route('/health')
 def health():
-    return {"status": "healthy"}
+    return jsonify({"status": "healthy"})
 
 @app.route('/ping')
 def ping():
     return "pong"
 
-def process_update_sync(update):
-    """Синхронная обертка для асинхронной обработки обновления"""
-    if telegram_application is None:
-        logger.error("Приложение бота не инициализировано")
-        return
-    
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    try:
-        loop.run_until_complete(telegram_application.process_update(update))
-    except Exception as e:
-        logger.error(f"Ошибка при обработке обновления: {e}")
-    finally:
-        loop.close()
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    """Обработчик вебхука от Telegram"""
-    from flask import request
-    if request.method == 'POST' and telegram_application is not None:
-        update = Update.de_json(request.get_json(force=True), telegram_application.bot)
-        
-        # Используем ThreadPoolExecutor для обработки асинхронных вызовов
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(process_update_sync, update)
-            try:
-                future.result(timeout=10)
-            except Exception as e:
-                logger.error(f"Ошибка при обработке вебхука: {e}")
-    
-    return 'ok'
-
-def setup_bot():
-    """Настройка бота и вебхука"""
-    global telegram_application
-    logger.info("Инициализация бота...")
-    
-    telegram_application = create_application()
-    if telegram_application is None:
-        logger.error("Не удалось создать приложение бота")
-        return False
-    
-    # Удаляем старый вебхук
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(telegram_application.bot.delete_webhook())
-        logger.info("Старый вебхук удален")
-    except Exception as e:
-        logger.warning(f"Не удалось удалить старый вебхук: {e}")
-    
-    # Получаем URL для вебхука из Render
-    render_url = os.getenv('RENDER_EXTERNAL_URL', '')
-    if not render_url:
-        logger.error("RENDER_EXTERNAL_URL не установлен!")
-        return False
-    
-    webhook_url = f"{render_url}/webhook"
-    logger.info(f"Настройка вебхука на URL: {webhook_url}")
-    
-    # Устанавливаем вебхук
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(telegram_application.bot.set_webhook(url=webhook_url, drop_pending_updates=True))
-        logger.info(f"Вебхук установлен: {webhook_url}")
-        
-        # Проверяем статус вебхука
-        webhook_info = loop.run_until_complete(telegram_application.bot.get_webhook_info())
-        logger.info(f"Статус вебхука: {webhook_info.url}")
-    except Exception as e:
-        logger.error(f"Ошибка при установке вебхука: {e}")
-        return False
-    
-    logger.info("Бот запущен в режиме вебхука и готов к работе!")
-    return True
-
 def run_web_server():
-    """Запускает Flask сервер"""
     port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=port, debug=False)
 
-def main():
-    """Главная функция запуска"""
-    logger.info("Запуск Multiverse-RP бота...")
+def main_with_web():
+    logger.info("Запуск веб-сервера для Render...")
     
-    # Настраиваем бота
-    if not setup_bot():
-        logger.error("Не удалось настроить бота. Завершение работы.")
-        return
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
     
-    # Запускаем веб-сервер Flask
-    run_web_server()
+    time.sleep(2)
+    
+    main()
 
 if __name__ == "__main__":
-    main()
- 
-       
+    main_with_web()
