@@ -1,6 +1,6 @@
 python-telegram-bot[job-queue]==20.7
-sqlalchemy==2.0.30
+flask==3.0.0
+gunicorn==21.2.0
+sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
-flask==3.0.2
-pytz==2024.1
