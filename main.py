@@ -94,7 +94,8 @@ def save_bot_status():
     STATE_CREATE_CHECK_PASSWORD,
     STATE_CREATE_CHECK_DESCRIPTION,
     STATE_SEND_INFO_CONTENT,
-) = range(16)
+    STATE_ANKETA_CLARIFY,
+) = range(17)
 
 EMOJI_PATTERN = re.compile(
     "["
@@ -1643,9 +1644,14 @@ async def send_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @db_session_for_conversation
 async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+    # Проверяем, является ли сообщение командой
+    if update.message.text and update.message.text.startswith('/'):
+        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео или гифки для анкеты.")
+        return STATE_ANKETA_MESSAGE
+
     message_content = {}
     
-    if update.message.text:
+    if update.message.text and not update.message.text.startswith('/'):
         message_content = {'type': 'text', 'content': update.message.text}
     elif update.message.photo:
         message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption}
@@ -1653,8 +1659,10 @@ async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         message_content = {'type': 'video', 'file_id': update.message.video.file_id, 'caption': update.message.caption}
     elif update.message.animation:
         message_content = {'type': 'animation', 'file_id': update.message.animation.file_id, 'caption': update.message.caption}
+    elif update.message.document:
+        message_content = {'type': 'document', 'file_id': update.message.document.file_id, 'caption': update.message.caption}
     else:
-        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео или гифки для анкеты.")
+        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео, документы или гифки для анкеты.")
         return STATE_ANKETA_MESSAGE
 
     context.user_data['anketa_buffer'].append(message_content)
@@ -1734,6 +1742,13 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
                             await context.bot.send_animation(
                                 chat_id=anketnik.id,
                                 animation=item['file_id'],
+                                caption=item.get('caption', ''),
+                                reply_to_message_id=admin_message.message_id
+                            )
+                        elif item['type'] == 'document':
+                            await context.bot.send_document(
+                                chat_id=anketnik.id,
+                                document=item['file_id'],
                                 caption=item.get('caption', ''),
                                 reply_to_message_id=admin_message.message_id
                             )
@@ -1823,6 +1838,13 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                             animation=item['file_id'],
                             caption=caption if caption else None
                         )
+                    elif item['type'] == 'document':
+                        caption = item.get('caption', '')
+                        await context.bot.send_document(
+                            chat_id=ANKET_CHANNEL_ID,
+                            document=item['file_id'],
+                            caption=caption if caption else None
+                        )
                 else:
                     await context.bot.send_message(
                         chat_id=ANKET_CHANNEL_ID,
@@ -1894,18 +1916,122 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Анкета отклонена.")
         
     elif action == "clarify":
-        anketa.status = "clarification"
-        
-        context.user_data['anketa_clarify_id'] = anketa_id
-        context.user_data['anketa_target_user_id'] = user.id
+        context.user_data['clarify_anketa_id'] = anketa_id
+        context.user_data['clarify_target_user_id'] = user.id
         
         await query.message.reply_text(
-            f"Вы начали диалог уточнения с @{user.username or user.id}. "
-            f"Отправьте ваше сообщение, и оно будет переслано пользователю. "
-            f"Для завершения диалога используйте /done_clarify."
+            f"Вы начали диалог уточнения с пользователем @{user.username or user.id}. "
+            f"Отправьте ваше сообщение для уточнения, и оно будет переслано пользователю. "
+            f"Для завершения уточнения напишите /done_clarify."
         )
         
         await query.answer("Начат диалог уточнения.")
+        return STATE_ANKETA_CLARIFY
+
+@db_session_for_conversation
+@anketnik_or_developer_only
+async def start_clarify_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+    """Начало диалога уточнения анкеты"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    parts = data.split('_')
+    anketa_id = int(parts[2])
+    
+    anketa = session.query(AnketaRequest).filter(AnketaRequest.id == anketa_id).first()
+    if not anketa:
+        await query.message.reply_text("Анкета не найдена.")
+        return ConversationHandler.END
+    
+    context.user_data['clarify_anketa_id'] = anketa_id
+    context.user_data['clarify_target_user_id'] = anketa.user_id
+    
+    await query.message.reply_text(
+        f"Вы начали диалог уточнения с пользователем. "
+        f"Отправьте ваше сообщение для уточнения, и оно будет переслано пользователю. "
+        f"Для завершения уточнения напишите /done_clarify."
+    )
+    return STATE_ANKETA_CLARIFY
+
+@db_session_for_conversation
+async def clarify_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+    """Обработка сообщения для уточнения"""
+    anketa_id = context.user_data.get('clarify_anketa_id')
+    target_user_id = context.user_data.get('clarify_target_user_id')
+    
+    if not anketa_id or not target_user_id:
+        await update.message.reply_text("Ошибка: данные диалога не найдены.")
+        return ConversationHandler.END
+    
+    if update.message.text and update.message.text.startswith('/'):
+        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения для уточнения.")
+        return STATE_ANKETA_CLARIFY
+    
+    message_content = {}
+    
+    if update.message.text and not update.message.text.startswith('/'):
+        message_content = {'type': 'text', 'content': update.message.text}
+    elif update.message.photo:
+        message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption}
+    elif update.message.video:
+        message_content = {'type': 'video', 'file_id': update.message.video.file_id, 'caption': update.message.caption}
+    elif update.message.document:
+        message_content = {'type': 'document', 'file_id': update.message.document.file_id, 'caption': update.message.caption}
+    else:
+        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео или документы.")
+        return STATE_ANKETA_CLARIFY
+    
+    # Отправляем сообщение пользователю
+    try:
+        admin_username = update.effective_user.username or update.effective_user.id
+        
+        if message_content['type'] == 'text':
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=f"Уточнение по вашей анкете от администратора @{admin_username}:\n\n{message_content['content']}\n\nПожалуйста, ответьте на это сообщение."
+            )
+        elif message_content['type'] == 'photo':
+            await context.bot.send_photo(
+                chat_id=target_user_id,
+                photo=message_content['file_id'],
+                caption=f"Уточнение по вашей анкете от администратора @{admin_username}:\n\n{message_content.get('caption', '')}\n\nПожалуйста, ответьте на это сообщение."
+            )
+        elif message_content['type'] == 'video':
+            await context.bot.send_video(
+                chat_id=target_user_id,
+                video=message_content['file_id'],
+                caption=f"Уточнение по вашей анкете от администратора @{admin_username}:\n\n{message_content.get('caption', '')}\n\nПожалуйста, ответьте на это сообщение."
+            )
+        elif message_content['type'] == 'document':
+            await context.bot.send_document(
+                chat_id=target_user_id,
+                document=message_content['file_id'],
+                caption=f"Уточнение по вашей анкете от администратора @{admin_username}:\n\n{message_content.get('caption', '')}\n\nПожалуйста, ответьте на это сообщение."
+            )
+        
+        await update.message.reply_text("Сообщение отправлено пользователю. Ожидайте ответа.")
+        
+    except TelegramError as e:
+        logger.error(f"Не удалось отправить уточнение пользователю {target_user_id}: {e}")
+        await update.message.reply_text("Не удалось отправить сообщение. Возможно, пользователь заблокировал бота.")
+    
+    return STATE_ANKETA_CLARIFY
+
+@db_session_for_conversation
+async def done_clarify_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+    """Завершение диалога уточнения"""
+    anketa_id = context.user_data.get('clarify_anketa_id')
+    
+    if anketa_id:
+        anketa = session.query(AnketaRequest).filter(AnketaRequest.id == anketa_id).first()
+        if anketa:
+            anketa.status = "clarification"
+            session.commit()
+    
+    context.user_data.clear()
+    await update.message.reply_text("Диалог уточнения завершен.")
+    return ConversationHandler.END
 
 @db_session
 @not_banned
@@ -2020,9 +2146,14 @@ async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE, se
         await update.message.reply_text("Бот не работает в этом чате. Используйте его в разрешенных группах или в личных сообщениях.")
         return ConversationHandler.END
 
+    # Проверяем, является ли сообщение командой
+    if update.message.text and update.message.text.startswith('/'):
+        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео, документы или гифки для поддержки.")
+        return STATE_SUPPORT_MESSAGE
+
     message_content = {}
     
-    if update.message.text:
+    if update.message.text and not update.message.text.startswith('/'):
         message_content = {'type': 'text', 'content': update.message.text}
     elif update.message.photo:
         message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption}
@@ -2317,10 +2448,12 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
     stats.message_count += 1
     stats.last_updated = datetime.datetime.now()
 
-    message_text = update.effective_message.text or update.effective_message.caption
+    message_text = update.effective_message.text or update.effective_message.caption or ""
     
     should_log = update.effective_chat.id in LOGGING_CHAT_IDS
     
+    # Проверяем, является ли сообщение постом
+    is_post = False
     if message_text:
         lines = message_text.strip().split('\n')
         
@@ -2329,12 +2462,14 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
         
         hashtag = None
         
+        # Ищем хэштег в первых трех строках
         for line in first_lines:
             line = line.strip()
             if line.startswith('#'):
                 hashtag = line.split()[0][1:] if line.split()[0].startswith('#') else None
                 break
         
+        # Если не нашли в первых трех, ищем в последних двух
         if not hashtag:
             for line in last_lines:
                 line = line.strip()
@@ -2343,35 +2478,37 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                     break
         
         if hashtag:
+            # Проверяем условия для поста
             post_text = message_text.strip()
             
+            # Основные условия
             has_hashtag = True
-            has_min_length = len(post_text) > 8
+            has_min_length = len(post_text) >= 3  # Минимальная длина 3 символа
+            has_no_special_chars = True  # Убираем ограничение на спецсимволы
             
             emoji_count = len(EMOJI_PATTERN.findall(post_text))
-            has_max_emoji = emoji_count < 50
+            has_max_emoji = emoji_count < 100  # Увеличиваем лимит эмодзи
             
-            first_char = post_text[0]
-            last_char = post_text[-1]
-            has_no_special_chars = first_char not in ['/', '\\', '|'] and last_char not in ['/', '\\', '|']
-            
+            # Проверяем наличие медиа
             has_media = (update.effective_message.photo is not None or 
                         update.effective_message.video is not None or
                         update.effective_message.animation is not None)
             
+            # Проверяем наличие роли с таким хэштегом
             user_has_role = False
-            if hashtag:
-                try:
-                    user_role = session.query(Role).filter(
-                        Role.user_id == user_db.id,
-                        func.lower(Role.hashtag) == func.lower(hashtag)
-                    ).first()
-                    user_has_role = user_role is not None
-                except Exception as e:
-                    logger.error(f"Ошибка при проверке роли: {e}")
-                    user_has_role = False
+            try:
+                user_role = session.query(Role).filter(
+                    Role.user_id == user_db.id,
+                    func.lower(Role.hashtag) == func.lower(hashtag)
+                ).first()
+                user_has_role = user_role is not None
+            except Exception as e:
+                logger.error(f"Ошибка при проверке роли: {e}")
+                user_has_role = False
             
-            if all([has_hashtag, has_min_length, has_max_emoji, has_no_special_chars]) and user_has_role:
+            # Если есть медиа или текст удовлетворяет условиям И есть роль
+            if user_has_role and (has_media or (has_hashtag and has_min_length and has_max_emoji and has_no_special_chars)):
+                # Создаем запись о посте
                 new_post = Post(
                     user=user_db,
                     content=post_text,
@@ -2381,14 +2518,16 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                 )
                 session.add(new_post)
                 
+                # Увеличиваем счетчик постов
                 stats.post_count += 1
                 
-                try:
+                # Обновляем активность роли
+                if user_role:
                     user_role.last_active = datetime.date.today()
                     user_role.last_warning_sent = None
                     logger.debug(f"Активность роли '{user_role.name}' обновлена для пользователя {user_db.username}")
-                except Exception as e:
-                    logger.error(f"Ошибка при обновлении активности роли: {e}")
+                
+                is_post = True
                 
                 if should_log and logging_active:
                     log_entry = (
@@ -2396,49 +2535,23 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                         f"[POST] Chat ID: {update.effective_chat.id}, "
                         f"User ID: {user_tg.id}, "
                         f"Username: @{user_tg.username or user_tg.id}, "
+                        f"Hashtag: #{hashtag}, "
                         f"Message: {post_text[:100]}\n"
                     )
                     with open("log.txt", "a", encoding="utf-8") as f:
                         f.write(log_entry)
-            else:
-                if should_log and logging_active:
-                    log_entry = (
-                        f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                        f"[NOT POST] Chat ID: {update.effective_chat.id}, "
-                        f"User ID: {user_tg.id}, "
-                        f"Username: @{user_tg.username or user_tg.id}, "
-                        f"Message: {post_text[:100] or 'FILE/PHOTO'}\n"
-                    )
-                    with open("log.txt", "a", encoding="utf-8") as f:
-                        f.write(log_entry)
     
-    elif should_log and logging_active and message_text:
-        lines = message_text.strip().split('\n')
-        first_lines = lines[:3]
-        last_lines = lines[-2:] if len(lines) >= 2 else []
-        
-        is_post = False
-        for line in first_lines:
-            if line.strip().startswith('#'):
-                is_post = True
-                break
-        
-        if not is_post:
-            for line in last_lines:
-                if line.strip().startswith('#'):
-                    is_post = True
-                    break
-        
-        if not is_post:
-            log_entry = (
-                f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                f"Chat ID: {update.effective_chat.id}, "
-                f"User ID: {user_tg.id}, "
-                f"Username: @{user_tg.username or user_tg.id}, "
-                f"Message: {message_text[:100] or 'FILE/PHOTO'}\n"
-            )
-            with open("log.txt", "a", encoding="utf-8") as f:
-                f.write(log_entry)
+    # Логируем непостовые сообщения
+    if should_log and logging_active and not is_post and message_text:
+        log_entry = (
+            f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+            f"Chat ID: {update.effective_chat.id}, "
+            f"User ID: {user_tg.id}, "
+            f"Username: @{user_tg.username or user_tg.id}, "
+            f"Message: {message_text[:100] or 'FILE/PHOTO'}\n"
+        )
+        with open("log.txt", "a", encoding="utf-8") as f:
+            f.write(log_entry)
     
     session.commit()
 
@@ -3684,12 +3797,32 @@ def main() -> None:
         entry_points=[
             CommandHandler("sendanketa", send_anketa_start, filters=allowed_chats_filter),
             CallbackQueryHandler(send_anketa_callback, pattern="^send_anketa_callback$"),
+            CallbackQueryHandler(start_clarify_dialog, pattern="^anketa_clarify_"),
         ],
         states={
-            STATE_ANKETA_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND & allowed_chats_filter, anketa_message)],
+            STATE_ANKETA_MESSAGE: [
+                MessageHandler(
+                    (filters.TEXT & ~filters.COMMAND) | 
+                    filters.PHOTO | 
+                    filters.VIDEO | 
+                    filters.ANIMATION | 
+                    filters.Document.ALL & allowed_chats_filter, 
+                    anketa_message
+                )
+            ],
+            STATE_ANKETA_CLARIFY: [
+                MessageHandler(
+                    (filters.TEXT & ~filters.COMMAND) | 
+                    filters.PHOTO | 
+                    filters.VIDEO | 
+                    filters.Document.ALL & allowed_chats_filter, 
+                    clarify_message
+                )
+            ],
         },
         fallbacks=[
             CommandHandler("done_anketa", done_anketa_dialog, filters=allowed_chats_filter),
+            CommandHandler("done_clarify", done_clarify_dialog, filters=allowed_chats_filter),
             CommandHandler("start", start, filters=allowed_chats_filter),
             CallbackQueryHandler(start, pattern="^start$")
         ],
@@ -3742,8 +3875,22 @@ def main() -> None:
             CallbackQueryHandler(start_reply_to_support, pattern="^support_reply_"),
         ],
         states={
-            STATE_SUPPORT_MESSAGE: [MessageHandler(filters.ALL & ~filters.COMMAND & allowed_chats_filter, support_message)],
-            STATE_SUPPORT_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND & allowed_chats_filter, support_reply_message)],
+            STATE_SUPPORT_MESSAGE: [
+                MessageHandler(
+                    (filters.TEXT & ~filters.COMMAND) | 
+                    filters.PHOTO | 
+                    filters.VIDEO | 
+                    filters.ANIMATION | 
+                    filters.Document.ALL & allowed_chats_filter, 
+                    support_message
+                )
+            ],
+            STATE_SUPPORT_REPLY: [
+                MessageHandler(
+                    (filters.TEXT & ~filters.COMMAND) & allowed_chats_filter, 
+                    support_reply_message
+                )
+            ],
         },
         fallbacks=[
             CommandHandler("done_support", done_support_dialog, filters=allowed_chats_filter),
