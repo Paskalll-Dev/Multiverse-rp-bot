@@ -1966,11 +1966,67 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                 text=f"Новая анкета от @{user.username or user.id}!"
             )
             
-            # Отправляем контент анкеты в канал
+            # Обрабатываем контент анкеты
+            # Если это список строк, преобразуем каждую строку в словарь
+            processed_items = []
+            
             if isinstance(anketa_content, list):
                 for item in anketa_content:
+                    if isinstance(item, str):
+                        # Пытаемся преобразовать строку в словарь
+                        try:
+                            # Заменяем одинарные кавычки на двойные для корректного JSON
+                            item_str = item.strip()
+                            # Убираем внешние кавычки если они есть
+                            if (item_str.startswith('"') and item_str.endswith('"')) or \
+                               (item_str.startswith("'") and item_str.endswith("'")):
+                                item_str = item_str[1:-1]
+                            
+                            # Теперь у нас строка типа: {'type': 'text', 'content': 'ТЕСТ'}
+                            # Преобразуем её в словарь
+                            item_str = item_str.replace("'", '"').replace('True', 'true').replace('False', 'false').replace('None', 'null')
+                            
+                            try:
+                                item_dict = json.loads(item_str)
+                                processed_items.append(item_dict)
+                            except json.JSONDecodeError:
+                                # Если не получилось как JSON, создаем простой словарь
+                                if 'type' in item_str and 'content' in item_str:
+                                    # Пробуем извлечь данные через регулярные выражения
+                                    import re
+                                    type_match = re.search(r"'type':\s*'([^']+)'", item_str)
+                                    content_match = re.search(r"'content':\s*'([^']*)'", item_str)
+                                    file_id_match = re.search(r"'file_id':\s*'([^']*)'", item_str)
+                                    caption_match = re.search(r"'caption':\s*'([^']*)'", item_str)
+                                    
+                                    item_dict = {}
+                                    if type_match:
+                                        item_dict['type'] = type_match.group(1)
+                                    if content_match:
+                                        item_dict['content'] = content_match.group(1)
+                                    if file_id_match:
+                                        item_dict['file_id'] = file_id_match.group(1)
+                                    if caption_match:
+                                        item_dict['caption'] = caption_match.group(1)
+                                    
+                                    if item_dict:
+                                        processed_items.append(item_dict)
+                        except Exception as e:
+                            logger.error(f"Ошибка при обработке элемента анкеты: {e}")
+                            # Если не удалось преобразовать, добавляем как простой текст
+                            processed_items.append({'type': 'text', 'content': item})
+                    elif isinstance(item, dict):
+                        processed_items.append(item)
+                # Если список пуст или не список, пытаемся обработать как есть
+                if not processed_items:
+                    processed_items = anketa_content
+            else:
+                processed_items = anketa_content
+            
+            # Отправляем обработанный контент в канал
+            if isinstance(processed_items, list):
+                for item in processed_items:
                     try:
-                        # Если это словарь (как должно быть)
                         if isinstance(item, dict):
                             item_type = item.get('type', '')
                             content = item.get('content', '')
@@ -2011,74 +2067,20 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                                     document=file_id,
                                     caption=caption if caption and caption.strip() else None
                                 )
-                        # Если это строка (для старых данных)
-                        elif isinstance(item, str):
-                            # Проверяем, не является ли это JSON-строкой словаря
-                            if item.startswith('{') and item.endswith('}'):
-                                try:
-                                    item_dict = json.loads(item.replace("'", '"'))
-                                    item_type = item_dict.get('type', '')
-                                    content = item_dict.get('content', '')
-                                    file_id = item_dict.get('file_id', '')
-                                    caption = item_dict.get('caption', '')
-                                    
-                                    if item_type == 'text' and content and content.strip():
-                                        await send_to_channel_with_retry(
-                                            context=context,
-                                            chat_id=ANKET_CHANNEL_ID,
-                                            text=content
-                                        )
-                                    elif item_type == 'photo' and file_id:
-                                        await send_to_channel_with_retry(
-                                            context=context,
-                                            chat_id=ANKET_CHANNEL_ID,
-                                            photo=file_id,
-                                            caption=caption if caption and caption.strip() else None
-                                        )
-                                    elif item_type == 'video' and file_id:
-                                        await send_to_channel_with_retry(
-                                            context=context,
-                                            chat_id=ANKET_CHANNEL_ID,
-                                            video=file_id,
-                                            caption=caption if caption and caption.strip() else None
-                                        )
-                                    elif item_type == 'animation' and file_id:
-                                        await send_to_channel_with_retry(
-                                            context=context,
-                                            chat_id=ANKET_CHANNEL_ID,
-                                            animation=file_id,
-                                            caption=caption if caption and caption.strip() else None
-                                        )
-                                    elif item_type == 'document' and file_id:
-                                        await send_to_channel_with_retry(
-                                            context=context,
-                                            chat_id=ANKET_CHANNEL_ID,
-                                            document=file_id,
-                                            caption=caption if caption and caption.strip() else None
-                                        )
-                                except:
-                                    # Если не удалось распарсить как JSON, отправляем как текст
-                                    if item.strip():
-                                        await send_to_channel_with_retry(
-                                            context=context,
-                                            chat_id=ANKET_CHANNEL_ID,
-                                            text=item
-                                        )
-                            else:
-                                # Если это обычная строка, отправляем как текст
-                                if item.strip():
-                                    await send_to_channel_with_retry(
-                                        context=context,
-                                        chat_id=ANKET_CHANNEL_ID,
-                                        text=item
-                                    )
+                        elif isinstance(item, str) and item.strip():
+                            # Если это просто строка, отправляем как текст
+                            await send_to_channel_with_retry(
+                                context=context,
+                                chat_id=ANKET_CHANNEL_ID,
+                                text=item
+                            )
                     except TelegramError as e:
                         logger.error(f"Не удалось отправить часть анкеты в канал: {e}")
                         continue
             else:
-                # Если anketa_content не список, пытаемся отправить как текст
+                # Если processed_items не список, пытаемся отправить как текст
                 try:
-                    content_text = str(anketa_content)
+                    content_text = str(processed_items)
                     if content_text and content_text.strip() and content_text != "[]":
                         await send_to_channel_with_retry(
                             context=context,
@@ -2166,68 +2168,6 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         await query.answer("Начат диалог уточнения.")
         return STATE_ANKETA_CLARIFY
-
-@db_session_for_conversation
-async def clarify_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    anketa_id = context.user_data.get('clarify_anketa_id')
-    target_user_id = context.user_data.get('clarify_target_user_id')
-    
-    if not anketa_id or not target_user_id:
-        await update.message.reply_text("Ошибка: данные диалога не найдены.")
-        return ConversationHandler.END
-    
-    if update.message.text and update.message.text.startswith('/'):
-        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения для уточнения.")
-        return STATE_ANKETA_CLARIFY
-    
-    message_content = {}
-    
-    if update.message.text and not update.message.text.startswith('/'):
-        message_content = {'type': 'text', 'content': update.message.text}
-    elif update.message.photo:
-        message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption}
-    elif update.message.video:
-        message_content = {'type': 'video', 'file_id': update.message.video.file_id, 'caption': update.message.caption}
-    elif update.message.document:
-        message_content = {'type': 'document', 'file_id': update.message.document.file_id, 'caption': update.message.caption}
-    else:
-        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео или документы.")
-        return STATE_ANKETA_CLARIFY
-    
-    try:
-        admin_username = update.effective_user.username or update.effective_user.id
-        
-        if message_content['type'] == 'text':
-            await context.bot.send_message(
-                chat_id=target_user_id,
-                text=f"Уточнение по вашей анкете от администратора @{admin_username}:\n\n{message_content['content']}\n\nПожалуйста, ответьте на это сообщение."
-            )
-        elif message_content['type'] == 'photo':
-            await context.bot.send_photo(
-                chat_id=target_user_id,
-                photo=message_content['file_id'],
-                caption=f"Уточнение по вашей анкете от администратора @{admin_username}:\n\n{message_content.get('caption', '')}\n\nПожалуйста, ответьте на это сообщение."
-            )
-        elif message_content['type'] == 'video':
-            await context.bot.send_video(
-                chat_id=target_user_id,
-                video=message_content['file_id'],
-                caption=f"Уточнение по вашей анкете от администратора @{admin_username}:\n\n{message_content.get('caption', '')}\n\nПожалуйста, ответьте на это сообщение."
-            )
-        elif message_content['type'] == 'document':
-            await context.bot.send_document(
-                chat_id=target_user_id,
-                document=message_content['file_id'],
-                caption=f"Уточнение по вашей анкете от администратора @{admin_username}:\n\n{message_content.get('caption', '')}\n\nПожалуйста, ответьте на это сообщение."
-            )
-        
-        await update.message.reply_text("Сообщение отправлено пользователю. Ожидайте ответа.")
-        
-    except TelegramError as e:
-        logger.error(f"Не удалось отправить уточнение пользователю {target_user_id}: {e}")
-        await update.message.reply_text("Не удалось отправить сообщение. Возможно, пользователь заблокировал бота.")
-    
-    return STATE_ANKETA_CLARIFY
 
 @db_session_for_conversation
 async def done_clarify_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
