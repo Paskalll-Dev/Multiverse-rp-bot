@@ -12,7 +12,7 @@ from typing import Literal, Optional, List, Dict, Union
 from dotenv import load_dotenv
 load_dotenv()
 
-from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, Date, ForeignKey, func, or_, and_, text
+from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, Date, ForeignKey, func, or_, and_, text, BigInteger
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base
 from sqlalchemy.types import TypeDecorator, CHAR
 from sqlalchemy import TypeDecorator, String as SQLA_String
@@ -269,8 +269,8 @@ class Post(Base):
     content = Column(Text)
     hashtag = Column(String, index=True)
     created_at = Column(DateTime, default=datetime.datetime.now)
-    message_id = Column(Integer, nullable=True)
-    chat_id = Column(Integer, nullable=True)
+    message_id = Column(BigInteger, nullable=True)
+    chat_id = Column(BigInteger, nullable=True)
 
     user = relationship("User", back_populates="posts")
 
@@ -281,8 +281,8 @@ class AnketaRequest(Base):
     anketa_content = Column(StringList)
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.datetime.now)
-    admin_message_id = Column(Integer, nullable=True)
-    admin_chat_id = Column(Integer, nullable=True)
+    admin_message_id = Column(BigInteger, nullable=True)
+    admin_chat_id = Column(BigInteger, nullable=True)
 
     user = relationship("User", back_populates="anketa_requests")
 
@@ -300,51 +300,74 @@ def create_tables():
     
     session = SessionLocal()
     try:
-        result = session.execute(text("PRAGMA table_info(message_stats)"))
-        columns = [row[1] for row in result]
-        if 'post_count' not in columns:
-            session.execute(text("ALTER TABLE message_stats ADD COLUMN post_count INTEGER DEFAULT 0"))
-            logger.info("Добавлена колонка post_count в таблицу message_stats.")
-        
-        result = session.execute(text("PRAGMA table_info(checks)"))
-        columns = [row[1] for row in result]
-        if 'password' not in columns:
-            session.execute(text("ALTER TABLE checks ADD COLUMN password TEXT"))
-            logger.info("Добавлена колонка password в таблице checks.")
-        
-        result = session.execute(text("PRAGMA table_info(roles)"))
-        columns = [row[1] for row in result]
-        if 'last_warning_sent' not in columns:
-            session.execute(text("ALTER TABLE roles ADD COLUMN last_warning_sent DATE"))
-            logger.info("Добавлена колонка last_warning_sent в таблице roles.")
-        
-        result = session.execute(text("PRAGMA table_info(anketa_requests)"))
-        columns = [row[1] for row in result]
-        if 'anketa_content' not in columns:
-            session.execute(text("ALTER TABLE anketa_requests ADD COLUMN anketa_content TEXT"))
-            logger.info("Добавлена колонка anketa_content в таблице anketa_requests.")
-        
-        result = session.execute(text("PRAGMA table_info(posts)"))
-        columns = [row[1] for row in result]
-        if 'content' not in columns:
-            session.execute(text("ALTER TABLE posts ADD COLUMN content TEXT"))
-            logger.info("Добавлена колонка content в таблице posts.")
-            
-        result = session.execute(text("PRAGMA table_info(users)"))
-        columns = [row[1] for row in result]
-        if 'is_spisochnik' in columns:
-            session.execute(text("""
-                CREATE TABLE users_new AS 
-                SELECT 
-                    id, username, on_balance, op_balance, status_rp, unique_code,
-                    is_developer,
-                    CASE WHEN is_spisochnik = 1 OR is_developer = 1 THEN 1 ELSE 0 END as is_anketnik,
-                    is_moderator, is_banned, nagrads_enabled, show_nagrads_in_profile
-                FROM users
-            """))
-            session.execute(text("DROP TABLE users"))
-            session.execute(text("ALTER TABLE users_new RENAME TO users"))
-            logger.info("Переименована колонка is_spisochnik в is_anketnik")
+        # Проверка и добавление колонок для PostgreSQL
+        if DATABASE_URL:
+            # Для PostgreSQL проверяем существование колонок
+            try:
+                # Проверяем существование колонки post_count
+                result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='message_stats' AND column_name='post_count'"))
+                if not result.fetchone():
+                    session.execute(text("ALTER TABLE message_stats ADD COLUMN post_count INTEGER DEFAULT 0"))
+                    logger.info("Добавлена колонка post_count в таблицу message_stats.")
+                
+                # Проверяем существование колонки password в checks
+                result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='checks' AND column_name='password'"))
+                if not result.fetchone():
+                    session.execute(text("ALTER TABLE checks ADD COLUMN password TEXT"))
+                    logger.info("Добавлена колонка password в таблице checks.")
+                
+                # Проверяем существование колонки last_warning_sent в roles
+                result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='roles' AND column_name='last_warning_sent'"))
+                if not result.fetchone():
+                    session.execute(text("ALTER TABLE roles ADD COLUMN last_warning_sent DATE"))
+                    logger.info("Добавлена колонка last_warning_sent в таблице roles.")
+                
+                # Проверяем существование колонки anketa_content в anketa_requests
+                result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='anketa_requests' AND column_name='anketa_content'"))
+                if not result.fetchone():
+                    session.execute(text("ALTER TABLE anketa_requests ADD COLUMN anketa_content TEXT"))
+                    logger.info("Добавлена колонка anketa_content в таблице anketa_requests.")
+                
+                # Проверяем существование колонки content в posts
+                result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='posts' AND column_name='content'"))
+                if not result.fetchone():
+                    session.execute(text("ALTER TABLE posts ADD COLUMN content TEXT"))
+                    logger.info("Добавлена колонка content в таблице posts.")
+                
+                # Проверяем существование колонки is_anketnik в users
+                result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='is_anketnik'"))
+                if not result.fetchone():
+                    # Проверяем существование старой колонки is_spisochnik
+                    result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='is_spisochnik'"))
+                    if result.fetchone():
+                        session.execute(text("ALTER TABLE users RENAME COLUMN is_spisochnik TO is_anketnik"))
+                        logger.info("Переименована колонка is_spisochnik в is_anketnik")
+                    else:
+                        session.execute(text("ALTER TABLE users ADD COLUMN is_anketnik BOOLEAN DEFAULT FALSE"))
+                        logger.info("Добавлена колонка is_anketnik в таблицу users.")
+                
+                # Обновляем тип колонок message_id и chat_id в таблице posts на BIGINT для PostgreSQL
+                result = session.execute(text("SELECT data_type FROM information_schema.columns WHERE table_name='posts' AND column_name='message_id'"))
+                row = result.fetchone()
+                if row and row[0] != 'bigint':
+                    session.execute(text("ALTER TABLE posts ALTER COLUMN message_id TYPE BIGINT"))
+                    logger.info("Исправлен тип колонки message_id на BIGINT в таблице posts.")
+                
+                result = session.execute(text("SELECT data_type FROM information_schema.columns WHERE table_name='posts' AND column_name='chat_id'"))
+                row = result.fetchone()
+                if row and row[0] != 'bigint':
+                    session.execute(text("ALTER TABLE posts ALTER COLUMN chat_id TYPE BIGINT"))
+                    logger.info("Исправлен тип колонки chat_id на BIGINT в таблице posts.")
+                    
+            except Exception as e:
+                logger.error(f"Ошибка при проверке/добавлении колонок в PostgreSQL: {e}")
+        else:
+            # Для SQLite используем старый код
+            result = session.execute(text("PRAGMA table_info(message_stats)"))
+            columns = [row[1] for row in result]
+            if 'post_count' not in columns:
+                session.execute(text("ALTER TABLE message_stats ADD COLUMN post_count INTEGER DEFAULT 0"))
+                logger.info("Добавлена колонка post_count в таблицу message_stats.")
         
         session.commit()
     except Exception as e:
@@ -844,7 +867,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
 /deleteplayerboard [номер] - Удалить свою запись с PLAYERBOARD.
 /Info - Показать информацию INFO.
 /InfoON - Подписаться на рассылку INFO.
-/InfoOFF - Отписаться от рассылку INFO.
+/InfoOFF - Отписаться от рассылки INFO.
 
 Административные команды:
 /add [@username #хэштег НазваниеРоли] - Выдать роль пользователю (можно массово через запятую).
@@ -1551,7 +1574,7 @@ async def delete_playerboard_entry(update: Update, context: ContextTypes.DEFAULT
     
     entry = session.query(PlayerBoardEntry).filter(PlayerBoardEntry.id == entry_id).first()
     if not entry:
-        await update.message.reply_text(f"Запись с номером {entry_id} не найдена.")
+        await update.message.reply_text(f"Запись с номером {entry_id} не найдна.")
         return
     
     user_tg = update.effective_user
@@ -1621,9 +1644,9 @@ async def send_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     anketa_template = """Здравствуйте! Напишите анкету по этому шаблону:
 
 Шаблон анкеты для взятия персонажа из фд:
-1. Имя персонаша.
+1. Имя персонажа.
 2. Вселенная персонажа.
-3. Способности персонаша.
+3. Способности персонажа.
 4. Какую роль вы меняете (если меняете).
 
 Шаблон анкеты для взятия ОСА (СВОЕГО ПРИДУМАННОГО ПЕРСОНАЖА):
@@ -1644,14 +1667,9 @@ async def send_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @db_session_for_conversation
 async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    # Проверяем, является ли сообщение командой
-    if update.message.text and update.message.text.startswith('/'):
-        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео или гифки для анкеты.")
-        return STATE_ANKETA_MESSAGE
-
     message_content = {}
     
-    if update.message.text and not update.message.text.startswith('/'):
+    if update.message.text:
         message_content = {'type': 'text', 'content': update.message.text}
     elif update.message.photo:
         message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption}
@@ -1688,83 +1706,71 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
     session.commit()
     session.refresh(new_anketa)
 
-    keyboard = [
-        [
-            InlineKeyboardButton("Одобрить", callback_data=f"anketa_approve_{new_anketa.id}"),
-            InlineKeyboardButton("Отказать", callback_data=f"anketa_reject_{new_anketa.id}"),
-            InlineKeyboardButton("Уточнить", callback_data=f"anketa_clarify_{new_anketa.id}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    # Получаем всех анкетников и разработчиков
+    anketniks = session.query(User).filter(
+        or_(User.is_anketnik == True, User.is_developer == True)
+    ).all()
+    
+    for anketnik in anketniks:
+        try:
+            # Отправляем основное сообщение с кнопками
+            admin_message_text = f"Новая анкета от @{user_tg.username or user_tg.id} (ID: {user_tg.id}):"
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("Одобрить", callback_data=f"anketa_approve_{new_anketa.id}"),
+                    InlineKeyboardButton("Отказать", callback_data=f"anketa_reject_{new_anketa.id}"),
+                    InlineKeyboardButton("Уточнить", callback_data=f"anketa_clarify_{new_anketa.id}")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            admin_message = await context.bot.send_message(
+                chat_id=anketnik.id,
+                text=admin_message_text,
+                reply_markup=reply_markup
+            )
+            
+            # Отправляем контент анкеты
+            for item in anketa_content_list:
+                try:
+                    if item['type'] == 'text':
+                        await context.bot.send_message(
+                            chat_id=anketnik.id,
+                            text=item['content']
+                        )
+                    elif item['type'] == 'photo':
+                        await context.bot.send_photo(
+                            chat_id=anketnik.id,
+                            photo=item['file_id'],
+                            caption=item.get('caption', '')
+                        )
+                    elif item['type'] == 'video':
+                        await context.bot.send_video(
+                            chat_id=anketnik.id,
+                            video=item['file_id'],
+                            caption=item.get('caption', '')
+                        )
+                    elif item['type'] == 'animation':
+                        await context.bot.send_animation(
+                            chat_id=anketnik.id,
+                            animation=item['file_id'],
+                            caption=item.get('caption', '')
+                        )
+                    elif item['type'] == 'document':
+                        await context.bot.send_document(
+                            chat_id=anketnik.id,
+                            document=item['file_id'],
+                            caption=item.get('caption', '')
+                        )
+                except TelegramError as e:
+                    logger.error(f"Не удалось отправить часть анкеты: {e}")
+                    
+        except TelegramError as e:
+            logger.error(f"Не удалось отправить анкету анкетнику {anketnik.id}: {e}")
 
-    admin_message_text = f"Новая анкета от @{user_tg.username or user_tg.id} (ID: {user_tg.id}):"
-
-    try:
-        anketniks = session.query(User).filter(
-            or_(User.is_anketnik == True, User.is_developer == True)
-        ).all()
-        
-        for anketnik in anketniks:
-            try:
-                admin_message = await context.bot.send_message(
-                    chat_id=anketnik.id,
-                    text=admin_message_text,
-                    reply_markup=reply_markup
-                )
-                
-                new_anketa.admin_message_id = admin_message.message_id
-                new_anketa.admin_chat_id = admin_message.chat_id
-                session.commit()
-                
-                for item in anketa_content_list:
-                    try:
-                        if item['type'] == 'text':
-                            await context.bot.send_message(
-                                chat_id=anketnik.id,
-                                text=item['content'],
-                                reply_to_message_id=admin_message.message_id
-                            )
-                        elif item['type'] == 'photo':
-                            await context.bot.send_photo(
-                                chat_id=anketnik.id,
-                                photo=item['file_id'],
-                                caption=item.get('caption', ''),
-                                reply_to_message_id=admin_message.message_id
-                            )
-                        elif item['type'] == 'video':
-                            await context.bot.send_video(
-                                chat_id=anketnik.id,
-                                video=item['file_id'],
-                                caption=item.get('caption', ''),
-                                reply_to_message_id=admin_message.message_id
-                            )
-                        elif item['type'] == 'animation':
-                            await context.bot.send_animation(
-                                chat_id=anketnik.id,
-                                animation=item['file_id'],
-                                caption=item.get('caption', ''),
-                                reply_to_message_id=admin_message.message_id
-                            )
-                        elif item['type'] == 'document':
-                            await context.bot.send_document(
-                                chat_id=anketnik.id,
-                                document=item['file_id'],
-                                caption=item.get('caption', ''),
-                                reply_to_message_id=admin_message.message_id
-                            )
-                    except TelegramError as e:
-                        logger.error(f"Не удалось отправить часть анкеты: {e}")
-                        
-            except TelegramError as e:
-                logger.error(f"Не удалось отправить анкету анкетнику {anketnik.id}: {e}")
-
-        await update.message.reply_text("Ваша анкета отправлена на рассмотрение. Ожидайте решения.")
-        return ConversationHandler.END
-        
-    except TelegramError as e:
-        logger.error(f"Не удалось отправить анкету: {e}")
-        await update.message.reply_text("Произошла ошибка при отправке анкеты. Пожалуйста, попробуйте позже.")
-        return ConversationHandler.END
+    await update.message.reply_text("Ваша анкета отправлена на рассмотрение. Ожидайте решения.")
+    return ConversationHandler.END
 
 @db_session_for_conversation
 async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
@@ -1787,11 +1793,6 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
     admin_username = query.from_user.username or query.from_user.id
     
     anketa_content = anketa.anketa_content
-    if isinstance(anketa_content, str):
-        try:
-            anketa_content = json.loads(anketa_content)
-        except:
-            anketa_content = []
     
     if action == "approve":
         anketa.status = "approved"
@@ -1876,8 +1877,8 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         try:
             await context.bot.edit_message_reply_markup(
-                chat_id=anketa.admin_chat_id,
-                message_id=anketa.admin_message_id,
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id,
                 reply_markup=InlineKeyboardMarkup(new_keyboard)
             )
         except TelegramError as e:
@@ -1906,8 +1907,8 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         try:
             await context.bot.edit_message_reply_markup(
-                chat_id=anketa.admin_chat_id,
-                message_id=anketa.admin_message_id,
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id,
                 reply_markup=InlineKeyboardMarkup(new_keyboard)
             )
         except TelegramError as e:
@@ -1929,34 +1930,7 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
         return STATE_ANKETA_CLARIFY
 
 @db_session_for_conversation
-@anketnik_or_developer_only
-async def start_clarify_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Начало диалога уточнения анкеты"""
-    query = update.callback_query
-    await query.answer()
-    
-    data = query.data
-    parts = data.split('_')
-    anketa_id = int(parts[2])
-    
-    anketa = session.query(AnketaRequest).filter(AnketaRequest.id == anketa_id).first()
-    if not anketa:
-        await query.message.reply_text("Анкета не найдена.")
-        return ConversationHandler.END
-    
-    context.user_data['clarify_anketa_id'] = anketa_id
-    context.user_data['clarify_target_user_id'] = anketa.user_id
-    
-    await query.message.reply_text(
-        f"Вы начали диалог уточнения с пользователем. "
-        f"Отправьте ваше сообщение для уточнения, и оно будет переслано пользователю. "
-        f"Для завершения уточнения напишите /done_clarify."
-    )
-    return STATE_ANKETA_CLARIFY
-
-@db_session_for_conversation
 async def clarify_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Обработка сообщения для уточнения"""
     anketa_id = context.user_data.get('clarify_anketa_id')
     target_user_id = context.user_data.get('clarify_target_user_id')
     
@@ -1982,7 +1956,6 @@ async def clarify_message(update: Update, context: ContextTypes.DEFAULT_TYPE, se
         await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео или документы.")
         return STATE_ANKETA_CLARIFY
     
-    # Отправляем сообщение пользователю
     try:
         admin_username = update.effective_user.username or update.effective_user.id
         
@@ -2020,7 +1993,6 @@ async def clarify_message(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 
 @db_session_for_conversation
 async def done_clarify_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Завершение диалога уточнения"""
     anketa_id = context.user_data.get('clarify_anketa_id')
     
     if anketa_id:
@@ -2146,14 +2118,9 @@ async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE, se
         await update.message.reply_text("Бот не работает в этом чате. Используйте его в разрешенных группах или в личных сообщениях.")
         return ConversationHandler.END
 
-    # Проверяем, является ли сообщение командой
-    if update.message.text and update.message.text.startswith('/'):
-        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео, документы или гифки для поддержки.")
-        return STATE_SUPPORT_MESSAGE
-
     message_content = {}
     
-    if update.message.text and not update.message.text.startswith('/'):
+    if update.message.text:
         message_content = {'type': 'text', 'content': update.message.text}
     elif update.message.photo:
         message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption}
@@ -2219,36 +2186,31 @@ async def done_support_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE
                     if item['type'] == 'text':
                         await context.bot.send_message(
                             chat_id=chat_id,
-                            text=item['content'],
-                            reply_to_message_id=admin_message.message_id
+                            text=item['content']
                         )
                     elif item['type'] == 'photo':
                         await context.bot.send_photo(
                             chat_id=chat_id,
                             photo=item['file_id'],
-                            caption=item.get('caption', ''),
-                            reply_to_message_id=admin_message.message_id
+                            caption=item.get('caption', '')
                         )
                     elif item['type'] == 'video':
                         await context.bot.send_video(
                             chat_id=chat_id,
                             video=item['file_id'],
-                            caption=item.get('caption', ''),
-                            reply_to_message_id=admin_message.message_id
+                            caption=item.get('caption', '')
                         )
                     elif item['type'] == 'animation':
                         await context.bot.send_animation(
                             chat_id=chat_id,
                             animation=item['file_id'],
-                            caption=item.get('caption', ''),
-                            reply_to_message_id=admin_message.message_id
+                            caption=item.get('caption', '')
                         )
                     elif item['type'] == 'document':
                         await context.bot.send_document(
                             chat_id=chat_id,
                             document=item['file_id'],
-                            caption=item.get('caption', ''),
-                            reply_to_message_id=admin_message.message_id
+                            caption=item.get('caption', '')
                         )
                 except TelegramError as e:
                     logger.error(f"Не удалось отправить часть запроса поддержки (тип: {item['type']}) в чат {chat_id}: {e}")
@@ -2452,63 +2414,44 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
     
     should_log = update.effective_chat.id in LOGGING_CHAT_IDS
     
-    # Проверяем, является ли сообщение постом
     is_post = False
+    
+    # Поиск хэштега в сообщении
+    hashtag = None
     if message_text:
-        lines = message_text.strip().split('\n')
-        
-        first_lines = lines[:3]
-        last_lines = lines[-2:] if len(lines) >= 2 else []
-        
-        hashtag = None
-        
-        # Ищем хэштег в первых трех строках
-        for line in first_lines:
-            line = line.strip()
-            if line.startswith('#'):
-                hashtag = line.split()[0][1:] if line.split()[0].startswith('#') else None
+        words = message_text.split()
+        for word in words:
+            if word.startswith('#'):
+                hashtag = word[1:]  # Убираем #
                 break
+    
+    if hashtag:
+        post_text = message_text.strip()
         
-        # Если не нашли в первых трех, ищем в последних двух
-        if not hashtag:
-            for line in last_lines:
-                line = line.strip()
-                if line.startswith('#'):
-                    hashtag = line.split()[0][1:] if line.split()[0].startswith('#') else None
-                    break
+        has_hashtag = True
+        has_min_length = len(post_text) >= 3
+        has_no_special_chars = True
         
-        if hashtag:
-            # Проверяем условия для поста
-            post_text = message_text.strip()
-            
-            # Основные условия
-            has_hashtag = True
-            has_min_length = len(post_text) >= 3  # Минимальная длина 3 символа
-            has_no_special_chars = True  # Убираем ограничение на спецсимволы
-            
-            emoji_count = len(EMOJI_PATTERN.findall(post_text))
-            has_max_emoji = emoji_count < 100  # Увеличиваем лимит эмодзи
-            
-            # Проверяем наличие медиа
-            has_media = (update.effective_message.photo is not None or 
-                        update.effective_message.video is not None or
-                        update.effective_message.animation is not None)
-            
-            # Проверяем наличие роли с таким хэштегом
+        emoji_count = len(EMOJI_PATTERN.findall(post_text))
+        has_max_emoji = emoji_count < 100
+        
+        has_media = (update.effective_message.photo is not None or 
+                    update.effective_message.video is not None or
+                    update.effective_message.animation is not None)
+        
+        user_has_role = False
+        try:
+            user_role = session.query(Role).filter(
+                Role.user_id == user_db.id,
+                func.lower(Role.hashtag) == func.lower(hashtag)
+            ).first()
+            user_has_role = user_role is not None
+        except Exception as e:
+            logger.error(f"Ошибка при проверке роли: {e}")
             user_has_role = False
+        
+        if user_has_role and (has_media or (has_hashtag and has_min_length and has_max_emoji and has_no_special_chars)):
             try:
-                user_role = session.query(Role).filter(
-                    Role.user_id == user_db.id,
-                    func.lower(Role.hashtag) == func.lower(hashtag)
-                ).first()
-                user_has_role = user_role is not None
-            except Exception as e:
-                logger.error(f"Ошибка при проверке роли: {e}")
-                user_has_role = False
-            
-            # Если есть медиа или текст удовлетворяет условиям И есть роль
-            if user_has_role and (has_media or (has_hashtag and has_min_length and has_max_emoji and has_no_special_chars)):
-                # Создаем запись о посте
                 new_post = Post(
                     user=user_db,
                     content=post_text,
@@ -2518,10 +2461,8 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                 )
                 session.add(new_post)
                 
-                # Увеличиваем счетчик постов
                 stats.post_count += 1
                 
-                # Обновляем активность роли
                 if user_role:
                     user_role.last_active = datetime.date.today()
                     user_role.last_warning_sent = None
@@ -2540,8 +2481,9 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                     )
                     with open("log.txt", "a", encoding="utf-8") as f:
                         f.write(log_entry)
+            except Exception as e:
+                logger.error(f"Ошибка при сохранении поста: {e}")
     
-    # Логируем непостовые сообщения
     if should_log and logging_active and not is_post and message_text:
         log_entry = (
             f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
@@ -3144,7 +3086,7 @@ async def stop_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_tg = update.effective_user
         user_db = session.query(User).filter(User.id == user_tg.id).first()
         if not user_db or not user_db.is_developer:
-            await update.message.reply_text("У вас нет прав для выполнения этой команда.")
+            await update.message.reply_text("У вас нет прав для выполнения этой команды.")
             return
         
         global logging_active
@@ -3797,7 +3739,6 @@ def main() -> None:
         entry_points=[
             CommandHandler("sendanketa", send_anketa_start, filters=allowed_chats_filter),
             CallbackQueryHandler(send_anketa_callback, pattern="^send_anketa_callback$"),
-            CallbackQueryHandler(start_clarify_dialog, pattern="^anketa_clarify_"),
         ],
         states={
             STATE_ANKETA_MESSAGE: [
@@ -3924,7 +3865,15 @@ def main() -> None:
             CommandHandler("SendInfo", start_send_info, filters=allowed_chats_filter),
         ],
         states={
-            STATE_SEND_INFO_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND & allowed_chats_filter, send_info_content)],
+            STATE_SEND_INFO_CONTENT: [
+                MessageHandler(
+                    (filters.TEXT & ~filters.COMMAND) | 
+                    filters.PHOTO | 
+                    filters.VIDEO | 
+                    filters.ANIMATION & allowed_chats_filter, 
+                    send_info_content
+                )
+            ],
         },
         fallbacks=[
             CommandHandler("Done_info", done_info_dialog, filters=allowed_chats_filter),
