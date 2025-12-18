@@ -3885,6 +3885,8 @@ def webhook():
         asyncio.run_coroutine_threadsafe(application.process_update(update), application._loop)
     return 'ok'
 
+# ... (весь предыдущий код остается без изменений до функций run_bot и run_web_server)
+
 def run_bot():
     """Запуск бота с вебхуками"""
     global application
@@ -3892,19 +3894,17 @@ def run_bot():
     
     application = create_application()
     if application is None:
+        logger.error("Не удалось создать приложение бота")
         return
     
-    # ПЕРВОЕ, что нужно сделать - удалить старый вебхук
-    async def cleanup_webhooks():
-        try:
-            await application.bot.delete_webhook()
-            logger.info("Старый вебхук удален")
-        except Exception as e:
-            logger.warning(f"Не удалось удалить старый вебхук: {e}")
-    
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(cleanup_webhooks())
+    # Удаляем старый вебхук
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.bot.delete_webhook())
+        logger.info("Старый вебхук удален")
+    except Exception as e:
+        logger.warning(f"Не удалось удалить старый вебхук: {e}")
     
     # Получаем URL для вебхука из Render
     render_url = os.getenv('RENDER_EXTERNAL_URL', '')
@@ -3916,20 +3916,46 @@ def run_bot():
     logger.info(f"Настройка вебхука на URL: {webhook_url}")
     
     # Устанавливаем вебхук
-    async def setup_webhook():
-        try:
-            await application.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-            logger.info(f"Вебхук установлен: {webhook_url}")
-            
-            # Проверяем статус вебхука
-            webhook_info = await application.bot.get_webhook_info()
-            logger.info(f"Статус вебхука: {webhook_info.url}")
-        except Exception as e:
-            logger.error(f"Ошибка при установке вебхука: {e}")
-    
-    loop.run_until_complete(setup_webhook())
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.bot.set_webhook(url=webhook_url, drop_pending_updates=True))
+        logger.info(f"Вебхук установлен: {webhook_url}")
+        
+        # Проверяем статус вебхука
+        webhook_info = loop.run_until_complete(application.bot.get_webhook_info())
+        logger.info(f"Статус вебхука: {webhook_info.url}")
+    except Exception as e:
+        logger.error(f"Ошибка при установке вебхука: {e}")
+        return
     
     logger.info("Бот запущен в режиме вебхука и готов к работе!")
+    return application
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Обработчик вебхука от Telegram"""
+    if request.method == 'POST' and application is not None:
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        
+        # Используем ThreadPoolExecutor для обработки асинхронных вызовов
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(process_update_sync, update)
+            future.result(timeout=10)
+    
+    return 'ok'
+
+def process_update_sync(update):
+    """Синхронная обертка для асинхронной обработки обновления"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(application.process_update(update))
+    except Exception as e:
+        logger.error(f"Ошибка при обработке обновления: {e}")
+    finally:
+        loop.close()
 
 def run_web_server():
     """Запускает Flask сервер"""
@@ -3940,18 +3966,16 @@ def main_with_web():
     """Запускает веб-сервер и бота с вебхуками"""
     logger.info("Запуск Multiverse-RP бота...")
     
-    # Сначала остановим все возможные старые процессы
-    logger.info("Очистка старых вебхуков...")
-    
-    # Запускаем бота в отдельном потоке
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    
-    # Ждем немного, чтобы бот успел инициализироваться
-    time.sleep(2)
+    # Запускаем бота
+    bot_app = run_bot()
+    if not bot_app:
+        logger.error("Не удалось запустить бота. Завершение работы.")
+        return
     
     # Запускаем веб-сервер Flask в основном потоке
     run_web_server()
 
 if __name__ == "__main__":
     main_with_web()
+ 
+       
