@@ -1825,38 +1825,52 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 reply_markup=reply_markup
             )
             
-            # Отправляем контент анкеты
+            # Отправляем контент анкеты в правильном формате
             for item in anketa_content_list:
                 try:
                     if item['type'] == 'text':
-                        await context.bot.send_message(
-                            chat_id=anketnik.id,
-                            text=item['content']
-                        )
+                        text_content = item.get('content', '')
+                        if text_content:
+                            await context.bot.send_message(
+                                chat_id=anketnik.id,
+                                text=text_content
+                            )
                     elif item['type'] == 'photo':
-                        await context.bot.send_photo(
-                            chat_id=anketnik.id,
-                            photo=item['file_id'],
-                            caption=item.get('caption', '')
-                        )
+                        photo_id = item.get('file_id', '')
+                        caption = item.get('caption', '')
+                        if photo_id:
+                            await context.bot.send_photo(
+                                chat_id=anketnik.id,
+                                photo=photo_id,
+                                caption=caption if caption and caption.strip() else None
+                            )
                     elif item['type'] == 'video':
-                        await context.bot.send_video(
-                            chat_id=anketnik.id,
-                            video=item['file_id'],
-                            caption=item.get('caption', '')
-                        )
+                        video_id = item.get('file_id', '')
+                        caption = item.get('caption', '')
+                        if video_id:
+                            await context.bot.send_video(
+                                chat_id=anketnik.id,
+                                video=video_id,
+                                caption=caption if caption and caption.strip() else None
+                            )
                     elif item['type'] == 'animation':
-                        await context.bot.send_animation(
-                            chat_id=anketnik.id,
-                            animation=item['file_id'],
-                            caption=item.get('caption', '')
-                        )
+                        animation_id = item.get('file_id', '')
+                        caption = item.get('caption', '')
+                        if animation_id:
+                            await context.bot.send_animation(
+                                chat_id=anketnik.id,
+                                animation=animation_id,
+                                caption=caption if caption and caption.strip() else None
+                            )
                     elif item['type'] == 'document':
-                        await context.bot.send_document(
-                            chat_id=anketnik.id,
-                            document=item['file_id'],
-                            caption=item.get('caption', '')
-                        )
+                        document_id = item.get('file_id', '')
+                        caption = item.get('caption', '')
+                        if document_id:
+                            await context.bot.send_document(
+                                chat_id=anketnik.id,
+                                document=document_id,
+                                caption=caption if caption and caption.strip() else None
+                            )
                 except TelegramError as e:
                     logger.error(f"Не удалось отправить часть анкеты: {e}")
                     
@@ -1959,7 +1973,7 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                 text=f"Новая анкета от @{user.username or user.id}!"
             )
             
-            # Отправляем контент анкеты
+            # Отправляем контент анкеты в канал
             if isinstance(anketa_content, list):
                 for item in anketa_content:
                     try:
@@ -1981,7 +1995,7 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                                         context=context,
                                         chat_id=ANKET_CHANNEL_ID,
                                         photo=photo_id,
-                                        caption=caption if caption else None
+                                        caption=caption if caption and caption.strip() else None
                                     )
                             elif item.get('type') == 'video':
                                 video_id = item.get('file_id', '')
@@ -1991,7 +2005,7 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                                         context=context,
                                         chat_id=ANKET_CHANNEL_ID,
                                         video=video_id,
-                                        caption=caption if caption else None
+                                        caption=caption if caption and caption.strip() else None
                                     )
                             elif item.get('type') == 'animation':
                                 animation_id = item.get('file_id', '')
@@ -2001,7 +2015,7 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                                         context=context,
                                         chat_id=ANKET_CHANNEL_ID,
                                         animation=animation_id,
-                                        caption=caption if caption else None
+                                        caption=caption if caption and caption.strip() else None
                                     )
                             elif item.get('type') == 'document':
                                 document_id = item.get('file_id', '')
@@ -2011,7 +2025,7 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                                         context=context,
                                         chat_id=ANKET_CHANNEL_ID,
                                         document=document_id,
-                                        caption=caption if caption else None
+                                        caption=caption if caption and caption.strip() else None
                                     )
                         elif isinstance(item, str):
                             # Если это просто строка
