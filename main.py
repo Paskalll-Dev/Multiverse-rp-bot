@@ -1726,6 +1726,191 @@ async def send_anketa_start(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     return STATE_ANKETA_MESSAGE
 
 @db_session_for_conversation
+@not_banned
+async def send_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    user_tg = query.from_user
+    get_or_create_user(session, user_tg.id, user_tg.username)
+
+    anketa_template = """Здравствуйте! Напишите анкету по этому шаблону:
+
+Шаблон анкеты для взятия персонажа из фд:
+1. Имя персонажа.
+2. Вселенная персонажа.
+3. Способности персонажа.
+4. Какую роль вы меняете (если меняете).
+
+Шаблон анкеты для взятия ОСА (СВОЕГО ПРИДУМАННОГО ПЕРСОНАЖА):
+1. Ваш Ник.
+2. Ваш Юзернейм.
+3. Какую Роль вы меняете (если меняете).
+4. Имя вашего персонажа.
+5. Способности вашего персонажа.
+6. Его характер.
+7. Внешность персонажа (фото или текстовое описание).
+
+Напишите /done_anketa когда анкета будет готова. Вашу анкету рассмотрит владелец РП."""
+
+    await query.message.reply_text(anketa_template)
+    
+    context.user_data['anketa_buffer'] = []
+    return STATE_ANKETA_MESSAGE
+
+@db_session_for_conversation
+async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+    message_content = {}
+    
+    if update.message.text:
+        message_content = {'type': 'text', 'content': update.message.text}
+    elif update.message.photo:
+        message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption or ''}
+    elif update.message.video:
+        message_content = {'type': 'video', 'file_id': update.message.video.file_id, 'caption': update.message.caption or ''}
+    elif update.message.animation:
+        message_content = {'type': 'animation', 'file_id': update.message.animation.file_id, 'caption': update.message.caption or ''}
+    elif update.message.document:
+        message_content = {'type': 'document', 'file_id': update.message.document.file_id, 'caption': update.message.caption or ''}
+    else:
+        await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео, документы или гифки для анкеты.")
+        return STATE_ANKETA_MESSAGE
+
+    context.user_data['anketa_buffer'].append(message_content)
+    await update.message.reply_text("Сообщение/медиа добавлено в анкету. Продолжайте или напишите /done_anketa для завершения.")
+    return STATE_ANKETA_MESSAGE
+
+@db_session_for_conversation
+async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+    user_tg = update.effective_user
+    user_db = get_or_create_user(session, user_tg.id, user_tg.username)
+
+    anketa_content_list = context.user_data.pop('anketa_buffer', [])
+    if not anketa_content_list:
+        await update.message.reply_text("Вы не отправили ни одного сообщения для анкеты. Запрос отменен.")
+        return ConversationHandler.END
+
+    # Сохраняем как JSON строку
+    new_anketa = AnketaRequest(
+        user=user_db,
+        anketa_content=anketa_content_list,  # StringList автоматически сериализует в JSON
+        status="pending"
+    )
+    session.add(new_anketa)
+    session.commit()
+    session.refresh(new_anketa)
+
+    # Получаем всех анкетников и разработчиков
+    anketniks = session.query(User).filter(
+        or_(User.is_anketnik == True, User.is_developer == True)
+    ).all()
+    
+    for anketnik in anketniks:
+        try:
+            # Отправляем основное сообщение с кнопками
+            admin_message_text = f"Новая анкета от @{user_tg.username or user_tg.id} (ID: {user_tg.id}):"
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("Одобрить", callback_data=f"anketa_approve_{new_anketa.id}"),
+                    InlineKeyboardButton("Отказать", callback_data=f"anketa_reject_{new_anketa.id}"),
+                    InlineKeyboardButton("Уточнить", callback_data=f"anketa_clarify_{new_anketa.id}")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            admin_message = await context.bot.send_message(
+                chat_id=anketnik.id,
+                text=admin_message_text,
+                reply_markup=reply_markup
+            )
+            
+            # Отправляем контент анкеты
+            for item in anketa_content_list:
+                try:
+                    if item['type'] == 'text':
+                        await context.bot.send_message(
+                            chat_id=anketnik.id,
+                            text=item['content']
+                        )
+                    elif item['type'] == 'photo':
+                        await context.bot.send_photo(
+                            chat_id=anketnik.id,
+                            photo=item['file_id'],
+                            caption=item.get('caption', '')
+                        )
+                    elif item['type'] == 'video':
+                        await context.bot.send_video(
+                            chat_id=anketnik.id,
+                            video=item['file_id'],
+                            caption=item.get('caption', '')
+                        )
+                    elif item['type'] == 'animation':
+                        await context.bot.send_animation(
+                            chat_id=anketnik.id,
+                            animation=item['file_id'],
+                            caption=item.get('caption', '')
+                        )
+                    elif item['type'] == 'document':
+                        await context.bot.send_document(
+                            chat_id=anketnik.id,
+                            document=item['file_id'],
+                            caption=item.get('caption', '')
+                        )
+                except TelegramError as e:
+                    logger.error(f"Не удалось отправить часть анкеты: {e}")
+                    
+        except TelegramError as e:
+            logger.error(f"Не удалось отправить анкету анкетнику {anketnik.id}: {e}")
+
+    await update.message.reply_text("Ваша анкета отправлена на рассмотрение. Ожидайте решения.")
+    return ConversationHandler.END
+
+async def send_to_channel_with_retry(context, chat_id, text=None, photo=None, video=None, animation=None, document=None, caption=None, max_retries=3):
+    """Отправка сообщения в канал с повторными попытками"""
+    for attempt in range(max_retries):
+        try:
+            if photo:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo,
+                    caption=caption
+                )
+            elif video:
+                await context.bot.send_video(
+                    chat_id=chat_id,
+                    video=video,
+                    caption=caption
+                )
+            elif animation:
+                await context.bot.send_animation(
+                    chat_id=chat_id,
+                    animation=animation,
+                    caption=caption
+                )
+            elif document:
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=document,
+                    caption=caption
+                )
+            elif text:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text
+                )
+            return True
+        except TimedOut:
+            if attempt < max_retries - 1:
+                logger.warning(f"Таймаут при отправке в канал {chat_id}, попытка {attempt + 2} из {max_retries}")
+                await asyncio.sleep(2)  # Ждем 2 секунды перед повторной попыткой
+            else:
+                raise
+        except TelegramError as e:
+            raise
+    return False
+
+@db_session_for_conversation
 async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     query = update.callback_query
     
@@ -1780,9 +1965,9 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                     try:
                         if isinstance(item, dict):
                             if item.get('type') == 'text':
-                                # Отправляем текст, а не dict
+                                # Извлекаем и отправляем только текст
                                 text_content = item.get('content', '')
-                                if text_content:  # Проверяем, что текст не пустой
+                                if text_content and text_content.strip():
                                     await send_to_channel_with_retry(
                                         context=context,
                                         chat_id=ANKET_CHANNEL_ID,
@@ -1842,11 +2027,11 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                 # Если anketa_content не список, пытаемся отправить как текст
                 try:
                     content_text = str(anketa_content)
-                    if content_text and content_text != "[]":
+                    if content_text and content_text.strip() and content_text != "[]":
                         await send_to_channel_with_retry(
                             context=context,
                             chat_id=ANKET_CHANNEL_ID,
-                            text=content_text[:4000]  # Ограничение Telegram
+                            text=content_text[:4000]
                         )
                 except TelegramError as e:
                     logger.error(f"Не удалось отправить анкету как текст: {e}")
@@ -1929,7 +2114,6 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         await query.answer("Начат диалог уточнения.")
         return STATE_ANKETA_CLARIFY
-
 
 @db_session_for_conversation
 async def clarify_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
