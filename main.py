@@ -1944,15 +1944,8 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
     user = anketa.user
     admin_username = query.from_user.username or query.from_user.id
     
-    # Исправляем получение контента анкеты
+    # Получаем контент анкеты
     anketa_content = anketa.anketa_content
-    if isinstance(anketa_content, str):
-        try:
-            anketa_content = json.loads(anketa_content)
-        except json.JSONDecodeError:
-            logger.error(f"Ошибка декодирования JSON анкеты {anketa_id}")
-            await query.answer("Ошибка при обработке анкеты.")
-            return
     
     if action == "approve":
         anketa.status = "approved"
@@ -1977,63 +1970,108 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
             if isinstance(anketa_content, list):
                 for item in anketa_content:
                     try:
+                        # Если это словарь (как должно быть)
                         if isinstance(item, dict):
-                            if item.get('type') == 'text':
-                                # Извлекаем и отправляем только текст
-                                text_content = item.get('content', '')
-                                if text_content and text_content.strip():
-                                    await send_to_channel_with_retry(
-                                        context=context,
-                                        chat_id=ANKET_CHANNEL_ID,
-                                        text=text_content
-                                    )
-                            elif item.get('type') == 'photo':
-                                photo_id = item.get('file_id', '')
-                                caption = item.get('caption', '')
-                                if photo_id:
-                                    await send_to_channel_with_retry(
-                                        context=context,
-                                        chat_id=ANKET_CHANNEL_ID,
-                                        photo=photo_id,
-                                        caption=caption if caption and caption.strip() else None
-                                    )
-                            elif item.get('type') == 'video':
-                                video_id = item.get('file_id', '')
-                                caption = item.get('caption', '')
-                                if video_id:
-                                    await send_to_channel_with_retry(
-                                        context=context,
-                                        chat_id=ANKET_CHANNEL_ID,
-                                        video=video_id,
-                                        caption=caption if caption and caption.strip() else None
-                                    )
-                            elif item.get('type') == 'animation':
-                                animation_id = item.get('file_id', '')
-                                caption = item.get('caption', '')
-                                if animation_id:
-                                    await send_to_channel_with_retry(
-                                        context=context,
-                                        chat_id=ANKET_CHANNEL_ID,
-                                        animation=animation_id,
-                                        caption=caption if caption and caption.strip() else None
-                                    )
-                            elif item.get('type') == 'document':
-                                document_id = item.get('file_id', '')
-                                caption = item.get('caption', '')
-                                if document_id:
-                                    await send_to_channel_with_retry(
-                                        context=context,
-                                        chat_id=ANKET_CHANNEL_ID,
-                                        document=document_id,
-                                        caption=caption if caption and caption.strip() else None
-                                    )
+                            item_type = item.get('type', '')
+                            content = item.get('content', '')
+                            file_id = item.get('file_id', '')
+                            caption = item.get('caption', '')
+                            
+                            if item_type == 'text' and content and content.strip():
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    text=content
+                                )
+                            elif item_type == 'photo' and file_id:
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    photo=file_id,
+                                    caption=caption if caption and caption.strip() else None
+                                )
+                            elif item_type == 'video' and file_id:
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    video=file_id,
+                                    caption=caption if caption and caption.strip() else None
+                                )
+                            elif item_type == 'animation' and file_id:
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    animation=file_id,
+                                    caption=caption if caption and caption.strip() else None
+                                )
+                            elif item_type == 'document' and file_id:
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    document=file_id,
+                                    caption=caption if caption and caption.strip() else None
+                                )
+                        # Если это строка (для старых данных)
                         elif isinstance(item, str):
-                            # Если это просто строка
-                            await send_to_channel_with_retry(
-                                context=context,
-                                chat_id=ANKET_CHANNEL_ID,
-                                text=item
-                            )
+                            # Проверяем, не является ли это JSON-строкой словаря
+                            if item.startswith('{') and item.endswith('}'):
+                                try:
+                                    item_dict = json.loads(item.replace("'", '"'))
+                                    item_type = item_dict.get('type', '')
+                                    content = item_dict.get('content', '')
+                                    file_id = item_dict.get('file_id', '')
+                                    caption = item_dict.get('caption', '')
+                                    
+                                    if item_type == 'text' and content and content.strip():
+                                        await send_to_channel_with_retry(
+                                            context=context,
+                                            chat_id=ANKET_CHANNEL_ID,
+                                            text=content
+                                        )
+                                    elif item_type == 'photo' and file_id:
+                                        await send_to_channel_with_retry(
+                                            context=context,
+                                            chat_id=ANKET_CHANNEL_ID,
+                                            photo=file_id,
+                                            caption=caption if caption and caption.strip() else None
+                                        )
+                                    elif item_type == 'video' and file_id:
+                                        await send_to_channel_with_retry(
+                                            context=context,
+                                            chat_id=ANKET_CHANNEL_ID,
+                                            video=file_id,
+                                            caption=caption if caption and caption.strip() else None
+                                        )
+                                    elif item_type == 'animation' and file_id:
+                                        await send_to_channel_with_retry(
+                                            context=context,
+                                            chat_id=ANKET_CHANNEL_ID,
+                                            animation=file_id,
+                                            caption=caption if caption and caption.strip() else None
+                                        )
+                                    elif item_type == 'document' and file_id:
+                                        await send_to_channel_with_retry(
+                                            context=context,
+                                            chat_id=ANKET_CHANNEL_ID,
+                                            document=file_id,
+                                            caption=caption if caption and caption.strip() else None
+                                        )
+                                except:
+                                    # Если не удалось распарсить как JSON, отправляем как текст
+                                    if item.strip():
+                                        await send_to_channel_with_retry(
+                                            context=context,
+                                            chat_id=ANKET_CHANNEL_ID,
+                                            text=item
+                                        )
+                            else:
+                                # Если это обычная строка, отправляем как текст
+                                if item.strip():
+                                    await send_to_channel_with_retry(
+                                        context=context,
+                                        chat_id=ANKET_CHANNEL_ID,
+                                        text=item
+                                    )
                     except TelegramError as e:
                         logger.error(f"Не удалось отправить часть анкеты в канал: {e}")
                         continue
