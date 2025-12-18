@@ -2,7 +2,6 @@ import logging
 import json
 import os
 import re
-import time
 import string
 import datetime
 import asyncio
@@ -10,19 +9,15 @@ import random
 from functools import wraps
 from typing import Literal, Optional, List, Dict, Union
 
-# ========== ДОБАВЬТЕ ЭТИ ИМПОРТЫ ==========
 from dotenv import load_dotenv
-load_dotenv()  # Загружаем переменные окружения
-# ==========================================
+load_dotenv()
 
-# SQLAlchemy для работы с базой данных
 from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, Date, ForeignKey, func, or_, and_, text
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base
 from sqlalchemy.types import TypeDecorator, CHAR
 from sqlalchemy import TypeDecorator, String as SQLA_String
 import uuid
 
-# Telegram Bot API
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, User as TGUser, CallbackQuery, Message
 from telegram.ext import (
     Application,
@@ -36,43 +31,34 @@ from telegram.ext import (
 )
 from telegram.error import TelegramError, TimedOut
 
-# --- Конфигурация бота ---
-# ========== ИЗМЕНЕНИЕ ТУТ ==========
 TOKEN = os.getenv('TOKEN', '8255764534:AAH6gMVaBXsctXqRUM5VujJM-O-cWKuiuRM')
-# ===================================
 DEVELOPER_IDS = [6283690984]
 INITIAL_ANKETNIK_USER_IDS = [6283690984]
 
-# ID канала для публикации ОДОБРЕННЫХ анкет
 ANKET_CHANNEL_ID = -1003394079022
-
 DEVELOPER_CHAT_ID = 6283690984
-ANKETNIK_CHAT_ID = -1003394079022  # Изменено на ID анкетницы
+ANKETNIK_CHAT_ID = -1003394079022
 
-# Список разрешенных чатов для логирования (только эти 2 чата)
 LOGGING_CHAT_IDS = [
-    -1003431402721,  # 011 и MultiverseRP Bot
-    -1003355542910,  # | Multiverse—RP |
+    -1003431402721,
+    -1003355542910,
 ]
 
-# Список разрешенных чатов для групповых команд
 ALLOWED_CHAT_IDS = [
-    -1003431402721,  # 011 и MultiverseRP Bot
-    -1003355542910,  # | Multiverse—RP |
+    -1003431402721,
+    -1003355542910,
     -1003300824366,
-    -1003394079022,  # Анкетница
+    -1003394079022,
     -1003062290367,
 ]
 
 DB_NAME = "multiverse_rp.db"
 
-# Включим логирование
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# --- Глобальные переменные для настроек бота ---
 BOT_STATUS_FILE = "bot_status.json"
 logging_active = False
 filtering_posts_active = False
@@ -91,7 +77,6 @@ def save_bot_status():
         json.dump({"logging_active": logging_active, "filtering_posts_active": filtering_posts_active}, f, indent=4, ensure_ascii=False)
     logger.info("Статус бота сохранен.")
 
-# --- Состояния пользователей для диалогов ConversationHandler ---
 (
     STATE_SUPPORT_MESSAGE,
     STATE_SUPPORT_REPLY,
@@ -111,7 +96,6 @@ def save_bot_status():
     STATE_SEND_INFO_CONTENT,
 ) = range(16)
 
-# Регулярное выражение для обнаружения большинства распространенных эмодзи
 EMOJI_PATTERN = re.compile(
     "["
     "\U0001F600-\U0001F64F"
@@ -123,20 +107,15 @@ EMOJI_PATTERN = re.compile(
     "]+"
 )
 
-# --- База данных ---
-
-# ========== ИЗМЕНЕНИЕ ДЛЯ RENDER ==========
 DATABASE_URL = os.getenv('DATABASE_URL', '').replace('postgres://', 'postgresql://')
 
 if DATABASE_URL:
-    # Используем PostgreSQL на Render
     engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
     logger.info("Используется PostgreSQL база данных")
 else:
-    # Локальная разработка - SQLite
     engine = create_engine(f"sqlite:///{DB_NAME}", connect_args={"check_same_thread": False})
     logger.info("Используется локальная SQLite база данных")
-# ==========================================
+
 Base = declarative_base()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -169,7 +148,6 @@ class StringList(TypeDecorator):
             logger.error(f"Unexpected error in StringList process_result_param for value '{value}': {e}. Returning empty list.", exc_info=True)
             return []
 
-# Модели
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -319,72 +297,60 @@ def create_tables():
     Base.metadata.create_all(bind=engine)
     logger.info("Таблицы базы данных созданы или уже существуют.")
     
-    # Проверяем и добавляем недостающие колонки (только для SQLite)
-    # Для PostgreSQL эти проверки не нужны и вызывают ошибку
-    if not DATABASE_URL or 'postgresql' not in DATABASE_URL:
-        session = SessionLocal()
-        try:
-            # Проверяем наличие колонки post_count в таблице message_stats
-            result = session.execute(text("PRAGMA table_info(message_stats)"))
-            columns = [row[1] for row in result]
-            if 'post_count' not in columns:
-                session.execute(text("ALTER TABLE message_stats ADD COLUMN post_count INTEGER DEFAULT 0"))
-                logger.info("Добавлена колонка post_count в таблицу message_stats.")
+    session = SessionLocal()
+    try:
+        result = session.execute(text("PRAGMA table_info(message_stats)"))
+        columns = [row[1] for row in result]
+        if 'post_count' not in columns:
+            session.execute(text("ALTER TABLE message_stats ADD COLUMN post_count INTEGER DEFAULT 0"))
+            logger.info("Добавлена колонка post_count в таблицу message_stats.")
+        
+        result = session.execute(text("PRAGMA table_info(checks)"))
+        columns = [row[1] for row in result]
+        if 'password' not in columns:
+            session.execute(text("ALTER TABLE checks ADD COLUMN password TEXT"))
+            logger.info("Добавлена колонка password в таблице checks.")
+        
+        result = session.execute(text("PRAGMA table_info(roles)"))
+        columns = [row[1] for row in result]
+        if 'last_warning_sent' not in columns:
+            session.execute(text("ALTER TABLE roles ADD COLUMN last_warning_sent DATE"))
+            logger.info("Добавлена колонка last_warning_sent в таблице roles.")
+        
+        result = session.execute(text("PRAGMA table_info(anketa_requests)"))
+        columns = [row[1] for row in result]
+        if 'anketa_content' not in columns:
+            session.execute(text("ALTER TABLE anketa_requests ADD COLUMN anketa_content TEXT"))
+            logger.info("Добавлена колонка anketa_content в таблице anketa_requests.")
+        
+        result = session.execute(text("PRAGMA table_info(posts)"))
+        columns = [row[1] for row in result]
+        if 'content' not in columns:
+            session.execute(text("ALTER TABLE posts ADD COLUMN content TEXT"))
+            logger.info("Добавлена колонка content в таблице posts.")
             
-            # Проверяем наличие колонки password в таблице checks
-            result = session.execute(text("PRAGMA table_info(checks)"))
-            columns = [row[1] for row in result]
-            if 'password' not in columns:
-                session.execute(text("ALTER TABLE checks ADD COLUMN password TEXT"))
-                logger.info("Добавлена колонка password в таблице checks.")
-            
-            # Проверяем наличие колонки last_warning_sent в таблице roles
-            result = session.execute(text("PRAGMA table_info(roles)"))
-            columns = [row[1] for row in result]
-            if 'last_warning_sent' not in columns:
-                session.execute(text("ALTER TABLE roles ADD COLUMN last_warning_sent DATE"))
-                logger.info("Добавлена колонка last_warning_sent в таблице roles.")
-            
-            # Проверяем наличие колонки anketa_content в таблице anketa_requests
-            result = session.execute(text("PRAGMA table_info(anketa_requests)"))
-            columns = [row[1] for row in result]
-            if 'anketa_content' not in columns:
-                session.execute(text("ALTER TABLE anketa_requests ADD COLUMN anketa_content TEXT"))
-                logger.info("Добавлена колонка anketa_content в таблице anketa_requests.")
-            
-            # Проверяем наличие колонки content в таблице posts
-            result = session.execute(text("PRAGMA table_info(posts)"))
-            columns = [row[1] for row in result]
-            if 'content' not in columns:
-                session.execute(text("ALTER TABLE posts ADD COLUMN content TEXT"))
-                logger.info("Добавлена колонка content в таблице posts.")
-                
-            # Меняем название колонки is_spisochnik на is_anketnik если она существует
-            result = session.execute(text("PRAGMA table_info(users)"))
-            columns = [row[1] for row in result]
-            if 'is_spisochnik' in columns:
-                # Создаем временную таблицу
-                session.execute(text("""
-                    CREATE TABLE users_new AS 
-                    SELECT 
-                        id, username, on_balance, op_balance, status_rp, unique_code,
-                        is_developer,
-                        CASE WHEN is_spisochnik = 1 OR is_developer = 1 THEN 1 ELSE 0 END as is_anketnik,
-                        is_moderator, is_banned, nagrads_enabled, show_nagrads_in_profile
-                    FROM users
-                """))
-                session.execute(text("DROP TABLE users"))
-                session.execute(text("ALTER TABLE users_new RENAME TO users"))
-                logger.info("Переименована колонка is_spisochnik в is_anketnik")
-            
-            session.commit()
-        except Exception as e:
-            logger.error(f"Ошибка при проверке/добавлении колонок: {e}")
-            session.rollback()
-        finally:
-            session.close()
-    else:
-        logger.info("Проверка колонок пропущена (используется PostgreSQL)")
+        result = session.execute(text("PRAGMA table_info(users)"))
+        columns = [row[1] for row in result]
+        if 'is_spisochnik' in columns:
+            session.execute(text("""
+                CREATE TABLE users_new AS 
+                SELECT 
+                    id, username, on_balance, op_balance, status_rp, unique_code,
+                    is_developer,
+                    CASE WHEN is_spisochnik = 1 OR is_developer = 1 THEN 1 ELSE 0 END as is_anketnik,
+                    is_moderator, is_banned, nagrads_enabled, show_nagrads_in_profile
+                FROM users
+            """))
+            session.execute(text("DROP TABLE users"))
+            session.execute(text("ALTER TABLE users_new RENAME TO users"))
+            logger.info("Переименована колонка is_spisochnik в is_anketnik")
+        
+        session.commit()
+    except Exception as e:
+        logger.error(f"Ошибка при проверке/добавлении колонок: {e}")
+        session.rollback()
+    finally:
+        session.close()
 
 def get_session():
     db = SessionLocal()
@@ -396,7 +362,6 @@ def get_session():
 def get_session_for_job():
     return SessionLocal()
 
-# Функция для получения сессии БД в обработчиках ConversationHandler
 def get_db_session():
     return SessionLocal()
 
@@ -418,7 +383,6 @@ def db_session(func):
             session.close()
     return wrapper
 
-# НОВЫЕ ДЕКОРАТОРЫ для обработчиков ConversationHandler
 def db_session_for_conversation(func):
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
@@ -442,7 +406,7 @@ def get_or_create_user(session, user_id: int, username: str | None) -> User:
         user = User(id=user_id, username=username, unique_code=str(uuid.uuid4())[:8])
         if user_id in DEVELOPER_IDS:
             user.is_developer = True
-            user.is_anketnik = True  # Разработчик автоматически становится анкетником
+            user.is_anketnik = True
         if user_id in INITIAL_ANKETNIK_USER_IDS:
             user.is_anketnik = True
         session.add(user)
@@ -467,7 +431,6 @@ def get_user_by_identifier_db(session, identifier: str) -> User | None:
             or_(User.username == identifier.lstrip('@'), User.unique_code == identifier)
         ).first()
 
-# Декораторы с сессией
 def developer_only(func):
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, session, *args, **kwargs):
@@ -538,11 +501,9 @@ class IsModeratorFilter(filters.BaseFilter):
 
 is_moderator_filter = IsModeratorFilter()
 
-# --- ИНФО СИСТЕМА (ПЕРЕРАБОТАННАЯ) ---
 INFO_POSTS_FILE = "info_posts.json"
 
 def load_info_posts():
-    """Загружает список INFO постов из файла"""
     if os.path.exists(INFO_POSTS_FILE):
         try:
             with open(INFO_POSTS_FILE, "r", encoding="utf-8") as f:
@@ -550,7 +511,6 @@ def load_info_posts():
                 if isinstance(posts, list):
                     return posts
                 else:
-                    # Если файл содержит один пост (старый формат), конвертируем в список
                     if posts:
                         return [posts]
                     else:
@@ -561,17 +521,13 @@ def load_info_posts():
     return []
 
 def save_info_posts(posts):
-    """Сохраняет список INFO постов в файл"""
     with open(INFO_POSTS_FILE, "w", encoding="utf-8") as f:
         json.dump(posts, f, ensure_ascii=False, indent=4)
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показывает все INFO посты с нумерацией."""
-    # Определяем, откуда пришел вызов
     if update.callback_query:
         message = update.callback_query.message
         chat_id = message.chat_id
-        # Можно также ответить на callback_query, чтобы убрать "часики"
         await update.callback_query.answer()
     else:
         message = update.message
@@ -583,16 +539,13 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await context.bot.send_message(chat_id=chat_id, text="/\\======I-N-F-O======/\\\n[Новостей/Событий/Рассылок пока-что нет]")
         return
     
-    # Отправляем первый пост с медиа если есть
     first_post = posts[0]
     
-    # Формируем заголовок для первого поста
     caption = f"INFO пост #1 из {len(posts)}\n\n"
     
     if first_post.get('text'):
         caption += first_post['text']
     
-    # Добавляем дату и отправителя
     if 'created_at' in first_post:
         try:
             created_at = datetime.datetime.fromisoformat(first_post['created_at'])
@@ -602,7 +555,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if 'created_by' in first_post:
         caption += f"\nОтправитель: @{first_post['created_by']}"
     
-    # Отправляем первый пост
     try:
         if first_post.get('photo'):
             await context.bot.send_photo(
@@ -628,7 +580,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logger.error(f"Ошибка при отправке первого INFO поста: {e}")
         await context.bot.send_message(chat_id=chat_id, text=caption)
     
-    # Если есть еще посты, выводим список остальных
     if len(posts) > 1:
         list_text = f"Всего INFO постов: {len(posts)}\n\n"
         list_text += f"1. {'(Медиа)' if any(key in first_post for key in ['photo', 'video', 'animation']) else ''} {first_post.get('text', 'Без текста')[:50]}...\n"
@@ -653,7 +604,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 @db_session_for_conversation
 @developer_only
 async def start_send_info(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Начинает процесс отправки INFO поста."""
     await update.message.reply_text(
         "Пожалуйста, введите ваш пост/посты в INFO. После завершения того что вы хотели написать отправьте команду /Done_info."
     )
@@ -662,7 +612,6 @@ async def start_send_info(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 
 @db_session_for_conversation
 async def send_info_content(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Обрабатывает контент INFO поста."""
     message_content = {}
     
     if update.message.text:
@@ -683,22 +632,19 @@ async def send_info_content(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 @db_session_for_conversation
 async def done_info_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Завершает диалог отправки INFO и публикует пост."""
     info_content_list = context.user_data.pop('info_buffer', [])
     if not info_content_list:
         await update.message.reply_text("Вы не отправили ни одного сообщения для INFO. Запрос отменен.")
         return ConversationHandler.END
 
-    # Сохраняем пост
     post_data = {}
-    # Соберем весь текст и найдем первое медиа
     text_parts = []
     media_file_id = None
     media_type = None
     for item in info_content_list:
         if item['type'] == 'text':
             text_parts.append(item['content'])
-        elif media_file_id is None:  # сохраняем только первое медиа
+        elif media_file_id is None:
             media_file_id = item['file_id']
             media_type = item['type']
             if item.get('caption'):
@@ -713,18 +659,15 @@ async def done_info_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, s
         elif media_type == 'animation':
             post_data['animation'] = media_file_id
 
-    # Добавляем дату создания и автора
     post_data['created_at'] = datetime.datetime.now().isoformat()
     post_data['created_by'] = update.effective_user.username or update.effective_user.id
 
-    # Загружаем существующие посты и добавляем новый
     posts = load_info_posts()
     posts.append(post_data)
     save_info_posts(posts)
 
     post_number = len(posts)
     
-    # Рассылаем подписанным пользователям
     subscriptions = session.query(InfoSubscription).filter(InfoSubscription.subscribed == True).all()
     
     caption = f"INFO пост #{post_number}\n\n{post_data.get('text', '')}\n\nДата отправления: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}\nОтправитель: @{update.effective_user.username or update.effective_user.id}"
@@ -765,7 +708,6 @@ async def done_info_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, s
 @db_session
 @developer_only
 async def delete_info_post(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Удаляет INFO пост по номеру (только разработчик)."""
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /deleteinfopost [номер_поста]")
         return
@@ -785,7 +727,6 @@ async def delete_info_post(update: Update, context: ContextTypes.DEFAULT_TYPE, s
         await update.message.reply_text(f"Пост с номером {post_num} не найден. Всего постов: {len(posts)}")
         return
     
-    # Удаляем пост (индексация с 0)
     deleted_post = posts.pop(post_num - 1)
     save_info_posts(posts)
     
@@ -794,7 +735,6 @@ async def delete_info_post(update: Update, context: ContextTypes.DEFAULT_TYPE, s
 @db_session
 @not_banned
 async def info_on(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Подписаться на рассылку INFO."""
     user_tg = update.effective_user
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
 
@@ -810,7 +750,6 @@ async def info_on(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -
 @db_session
 @not_banned
 async def info_off(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Отписаться от рассылку INFO."""
     user_tg = update.effective_user
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
 
@@ -822,8 +761,6 @@ async def info_off(update: Update, context: ContextTypes.DEFAULT_TYPE, session) 
         session.add(subscription)
 
     await update.message.reply_text("Вы отписались от рассылки INFO.")
-
-# --- Обработчики команд ---
 
 @db_session
 @not_banned
@@ -842,7 +779,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> 
         ],
         [
             InlineKeyboardButton("Поддержка", callback_data="support_dialog"),
-            InlineKeyboardButton("СолорБоард(ВРЕМЕННО НЕ РАБОТАЕТ)", callback_data="solorboard_list")
+            InlineKeyboardButton("СолорБоард", callback_data="solorboard_list")
         ],
         [
             InlineKeyboardButton("Ссылки", callback_data="links"),
@@ -884,7 +821,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
 /help - Показать это сообщение.
 /profile [username/ID] - Показать информацию о профиле.
 /support - Написать сообщение в поддержку.
-/solorboard - Посмотреть или создать объявление для поиска сорол(ВРЕМЕННО НЕ РАБОТАЕТ).
+/solorboard - Посмотреть или создать объявление для поиска сорола.
 /links - Список полезных ссылок.
 /checknagrad [юзернейм или уникальный код участника] - Посмотреть свои награды или награды другого пользователя.
 /sellnagrad [название_награды/код_награды] - Продать свою награду за ОН.
@@ -934,7 +871,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
 @db_session
 @not_banned
 async def newbie_info(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Информация для новичков"""
     message_text = """Здравствуй, новенький! 
 Если ты хочешь вступить в наш РП проект ты должен прочитать инфо ( @MultiverseRp ) и написать анкету для своего персонажа.Напишите команду /sendAnketa чтобы увидеть шаблон анкеты и отправить ее на одобрение.После отправки ждите как вам напишут об одобрении/отказе Роли или уточнении."""
     
@@ -946,9 +882,6 @@ async def newbie_info(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
 @db_session
 @not_banned
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Показать профиль пользователя - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
-    
-    # Если есть аргументы, показываем профиль другого пользователя
     if context.args:
         target_identifier = context.args[0]
         user_db = get_user_by_identifier_db(session, target_identifier)
@@ -959,7 +892,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -
                 await update.message.reply_text(f"Пользователь '{target_identifier}' не найден.")
             return
     else:
-        # Если нет аргументов, показываем профиль текущего пользователя
         user_tg = update.effective_user
         user_db = get_or_create_user(session, user_tg.id, user_tg.username)
 
@@ -976,7 +908,6 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -
     message_count = stats.message_count if stats else 0
     post_count = stats.post_count if stats else 0
 
-    # Форматируем роли в столбик
     if user_db.roles:
         roles_text = "Роли:\n"
         for role in user_db.roles:
@@ -1037,15 +968,12 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -
     if update.callback_query:
         await update.callback_query.answer()
 
-# --- КОМАНДЫ ДЛЯ НАГРАД ---
 @db_session
 @not_banned
 async def show_my_nagrads(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Показать награды пользователя"""
     query = update.callback_query
     user_tg = query.from_user if query else update.effective_user
     
-    # Проверяем, есть ли ID пользователя в callback_data
     if query and query.data.startswith("show_user_nagrads_"):
         try:
             target_user_id = int(query.data.split("_")[-1])
@@ -1074,7 +1002,6 @@ async def show_my_nagrads(update: Update, context: ContextTypes.DEFAULT_TYPE, se
             await update.message.reply_text("У пользователя пока нет наград.")
         return
     
-    # Отправляем первую награду с фото если есть
     first_nagrad = user_nagrads[0]
     definition = first_nagrad.definition
     
@@ -1121,8 +1048,6 @@ async def show_my_nagrads(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 @db_session
 @not_banned
 async def check_nagrad(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Проверить награды пользователя"""
-    
     if len(context.args) == 0:
         user_tg = update.effective_user
         user_db = get_or_create_user(session, user_tg.id, user_tg.username)
@@ -1143,7 +1068,6 @@ async def check_nagrad(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
         await update.message.reply_text(f"У пользователя @{user_db.username or user_db.id} нет наград.")
         return
     
-    # Отправляем первую награду с фото если есть
     first_nagrad = user_nagrads[0]
     definition = first_nagrad.definition
     
@@ -1177,8 +1101,6 @@ async def check_nagrad(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
 @db_session
 @not_banned
 async def sell_nagrad(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Продать награду"""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /sellnagrad [код_награды]")
         return
@@ -1213,7 +1135,6 @@ async def sell_nagrad(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
 @db_session
 @not_banned
 async def nagrada_on(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Включить награды"""
     user_tg = update.effective_user
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
     
@@ -1227,7 +1148,6 @@ async def nagrada_on(update: Update, context: ContextTypes.DEFAULT_TYPE, session
 @db_session
 @not_banned
 async def nagrada_off(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Выключить награды"""
     user_tg = update.effective_user
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
     
@@ -1241,8 +1161,6 @@ async def nagrada_off(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
 @db_session
 @not_banned
 async def delete_my_nagrad(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Удалить свою награду"""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /deletenagrad [код_награды]")
         return
@@ -1265,11 +1183,9 @@ async def delete_my_nagrad(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     
     await update.message.reply_text(f"Награда '{nagrad_name}' удалена из вашей коллекции.")
 
-# --- Диалог добавления награды ---
 @db_session_for_conversation
 @not_banned
 async def start_add_nagrad(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Начинает процесс добавления награды"""
     user_tg = update.effective_user
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
     
@@ -1282,13 +1198,11 @@ async def start_add_nagrad(update: Update, context: ContextTypes.DEFAULT_TYPE, s
 
 @db_session_for_conversation
 async def add_nagrad_name(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает название награды"""
     nagrad_name = update.message.text.strip()
     if not nagrad_name:
         await update.message.reply_text("Название награды не может быть пустым. Попробуйте еще раз:")
         return STATE_ADD_NAGRAD_NAME
     
-    # Проверяем, существует ли уже награда с таким названием
     existing_nagrad = session.query(NagradDefinition).filter(NagradDefinition.name == nagrad_name).first()
     if existing_nagrad:
         await update.message.reply_text(f"Награда с названием '{nagrad_name}' уже существует. Придумайте другое название:")
@@ -1303,7 +1217,6 @@ async def add_nagrad_name(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 
 @db_session_for_conversation
 async def add_nagrad_description(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает описание награды"""
     description = update.message.text.strip()
     if description.lower() == 'нет':
         description = None
@@ -1317,7 +1230,6 @@ async def add_nagrad_description(update: Update, context: ContextTypes.DEFAULT_T
 
 @db_session_for_conversation
 async def add_nagrad_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает фото награды"""
     photo_file_id = None
     if update.message.photo:
         photo_file_id = update.message.photo[-1].file_id
@@ -1348,7 +1260,6 @@ async def add_nagrad_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, s
 
 @db_session_for_conversation
 async def add_nagrad_cost(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает стоимость награды"""
     try:
         cost = int(update.message.text.strip())
         if cost <= 0:
@@ -1386,7 +1297,6 @@ async def add_nagrad_cost(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 
 @db_session_for_conversation
 async def add_nagrad_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает получателя награды и завершает создание"""
     target_identifier = update.message.text.strip()
     
     creator_id = context.user_data.get('nagrad_creator_id')
@@ -1408,11 +1318,9 @@ async def add_nagrad_target_user(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(f"Пользователь @{target_user.username or target_user.id} отключил получение наград.")
         return ConversationHandler.END
     
-    # Снимаем ОН с создателя
     nagrad_cost = context.user_data['nagrad_cost']
     creator.on_balance -= nagrad_cost
     
-    # Создаем определение награды
     nagrad_definition = NagradDefinition(
         name=context.user_data['nagrad_name'],
         description=context.user_data.get('nagrad_description'),
@@ -1422,7 +1330,6 @@ async def add_nagrad_target_user(update: Update, context: ContextTypes.DEFAULT_T
     session.add(nagrad_definition)
     session.flush()
     
-    # Выдаем награду получателю
     user_nagrad = UserNagrad(
         user_id=target_user.id,
         nagrad_definition_id=nagrad_definition.id,
@@ -1431,7 +1338,6 @@ async def add_nagrad_target_user(update: Update, context: ContextTypes.DEFAULT_T
     session.add(user_nagrad)
     session.flush()
     
-    # Уведомляем получателя
     try:
         message_text = f"Вы получили награду от @{creator.username or creator.id}!\n\n"
         message_text += f"Название: {nagrad_definition.name}\n"
@@ -1470,7 +1376,6 @@ async def add_nagrad_target_user(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await update.message.reply_text(result_message)
     
-    # Очищаем данные
     for key in ['nagrad_creator_id', 'nagrad_name', 'nagrad_description', 'nagrad_photo', 'nagrad_cost']:
         context.user_data.pop(key, None)
     
@@ -1479,8 +1384,6 @@ async def add_nagrad_target_user(update: Update, context: ContextTypes.DEFAULT_T
 @db_session
 @not_banned
 async def send_nagrada(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Отправить награду другому пользователю"""
-    
     if len(context.args) < 2:
         await update.message.reply_text("Использование: /SendNagrada [получатель] [код_награды]")
         return
@@ -1516,7 +1419,6 @@ async def send_nagrada(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
     user_nagrad.user_id = recipient_db.id
     user_nagrad.given_by_id = sender_db.id
     
-    # Уведомляем получателя
     try:
         message_text = f"Вы получили награду от @{sender_tg.username or sender_tg.id}!\n\n"
         message_text += f"Название: {user_nagrad.definition.name}\n"
@@ -1546,8 +1448,6 @@ async def send_nagrada(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
 @db_session
 @not_banned
 async def get_nagrada_details(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Показать детали награды (общедоступная)"""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /Nagrada [код_награды]")
         return
@@ -1589,12 +1489,9 @@ async def get_nagrada_details(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         await update.message.reply_text(response)
 
-# --- НОВАЯ КОМАНДА: Сброс пользователя ---
 @db_session
 @developer_only
 async def reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Обнуляет балансы и награды пользователя"""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /reset [юзернейм или уникальный код участника]")
         return
@@ -1610,18 +1507,13 @@ async def reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         await update.message.reply_text("Нельзя сбросить разработчика.")
         return
     
-    # Сохраняем старые значения для отчета
     old_on = user_db.on_balance
     old_op = user_db.op_balance
     
-    # Удаляем награды пользователя
     nagrad_count = session.query(UserNagrad).filter(UserNagrad.user_id == user_db.id).delete()
     
-    # Обнуляем балансы
     user_db.on_balance = 0
     user_db.op_balance = 0
-    
-    # Сбрасываем статус
     user_db.status_rp = "Участник"
     
     try:
@@ -1634,7 +1526,6 @@ async def reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     except TimedOut:
         logger.warning(f"Timeout при отправке сообщения в reset_user, но операция выполнена")
     
-    # Уведомляем пользователя
     try:
         await context.bot.send_message(
             chat_id=user_db.id,
@@ -1643,12 +1534,9 @@ async def reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     except TelegramError as e:
         logger.warning(f"Не удалось уведомить пользователя {user_db.id} о сбросе: {e}")
 
-# --- НОВАЯ КОМАНДА: Удаление записи СолорБоарда ---
 @db_session
 @not_banned
 async def delete_solor_board_entry(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Удаляет запись с СолорБоарда. Доступно создателю записи, модераторам и разработчику."""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /deletesolorb [номер_записи]")
         return
@@ -1685,11 +1573,9 @@ async def delete_solor_board_entry(update: Update, context: ContextTypes.DEFAULT
         except TelegramError as e:
             logger.warning(f"Не удалось уведомить создателя записи {entry.user_id}: {e}")
 
-# --- НОВАЯ КОМАНДА: Отправка анкеты ---
 @db_session_for_conversation
 @not_banned
 async def send_anketa_start(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Начинает процесс подачи анкеты."""
     user_tg = update.effective_user
     get_or_create_user(session, user_tg.id, user_tg.username)
 
@@ -1721,11 +1607,9 @@ async def send_anketa_start(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     context.user_data['anketa_buffer'] = []
     return STATE_ANKETA_MESSAGE
 
-# Обработчик кнопки "Подать Анкету" в меню
 @db_session_for_conversation
 @not_banned
 async def send_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Обработчик кнопки Подать Анкету в меню"""
     query = update.callback_query
     await query.answer()
     
@@ -1758,7 +1642,6 @@ async def send_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @db_session_for_conversation
 async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Обрабатывает сообщения анкеты."""
     message_content = {}
     
     if update.message.text:
@@ -1779,7 +1662,6 @@ async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
 
 @db_session_for_conversation
 async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Завершает анкету и отправляет на рассмотрение."""
     user_tg = update.effective_user
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
 
@@ -1808,7 +1690,6 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
     admin_message_text = f"Новая анкета от @{user_tg.username or user_tg.id} (ID: {user_tg.id}):"
 
     try:
-        # Получаем всех анкетников и разработчиков
         anketniks = session.query(User).filter(
             or_(User.is_anketnik == True, User.is_developer == True)
         ).all()
@@ -1867,10 +1748,8 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_text("Произошла ошибка при отправке анкеты. Пожалуйста, попробуйте позже.")
         return ConversationHandler.END
 
-# --- Обработчики кнопок для анкет ---
 @db_session_for_conversation
 async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Обрабатывает действия с анкетами."""
     query = update.callback_query
     
     if not query:
@@ -1889,7 +1768,6 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
     user = anketa.user
     admin_username = query.from_user.username or query.from_user.id
     
-    # Получаем содержание анкеты как список
     anketa_content = anketa.anketa_content
     if isinstance(anketa_content, str):
         try:
@@ -1909,7 +1787,6 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning(f"Не удалось уведомить пользователя {user.id} об одобрении анкеты: {e}")
         
         try:
-            # Отправляем в канал анкетницы
             await context.bot.send_message(
                 chat_id=ANKET_CHANNEL_ID,
                 text=f"Новая анкета от @{user.username or user.id}!"
@@ -1944,13 +1821,11 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                             caption=caption if caption else None
                         )
                 else:
-                    # Если это строка, а не словарь
                     await context.bot.send_message(
                         chat_id=ANKET_CHANNEL_ID,
                         text=item
                     )
             
-            # Отправляем статус отдельным сообщением
             await context.bot.send_message(
                 chat_id=ANKET_CHANNEL_ID,
                 text="Статус:✅"
@@ -1958,7 +1833,6 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                 
         except TelegramError as e:
             logger.error(f"Не удалось отправить анкету в канал {ANKET_CHANNEL_ID}: {e}")
-            # Уведомляем разработчика
             try:
                 await context.bot.send_message(
                     chat_id=DEVELOPER_CHAT_ID,
@@ -2030,19 +1904,15 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         await query.answer("Начат диалог уточнения.")
 
-# --- НОВАЯ КОМАНДА: Проверка роли ---
 @db_session
 @not_banned
 async def check_role(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Проверяет статус роли"""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /CheckRole [название роли/хэштег]")
         return
     
     role_identifier = " ".join(context.args).strip().lstrip('#')
     
-    # Ищем роль по хэштегу или названию (без учета регистра)
     role = session.query(Role).filter(
         or_(func.lower(Role.hashtag) == role_identifier.lower(), Role.name.ilike(f"%{role_identifier}%"))
     ).first()
@@ -2056,7 +1926,6 @@ async def check_role(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         await update.message.reply_text("Ошибка: владелец роли не найден.")
         return
     
-    # Рассчитываем количество дней неактивности
     today = datetime.date.today()
     days_inactive = (today - role.last_active).days
     
@@ -2069,12 +1938,9 @@ async def check_role(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     
     await update.message.reply_text(response)
 
-# --- Команды разработчика: накрутка баланса ---
 @db_session
 @developer_only
 async def qyqyqys_on(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Накрутить себе ОН"""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /QyqyqysON [сумма]")
         return
@@ -2101,8 +1967,6 @@ async def qyqyqys_on(update: Update, context: ContextTypes.DEFAULT_TYPE, session
 @db_session
 @developer_only
 async def qyqyqys_op(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Накрутить себе ОП"""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /QyqyqysOP [сумма]")
         return
@@ -2126,11 +1990,9 @@ async def qyqyqys_op(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         f"Ваш баланс ОП: {user_db.op_balance}"
     )
 
-# --- ФУНКЦИИ ПОДДЕРЖКИ ---
 @db_session_for_conversation
 @not_banned
 async def start_support_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Начинает диалог поддержки."""
     message_source = update.callback_query.message if update.callback_query else update.message
     
     if message_source.chat.type != "private" and message_source.chat.id not in ALLOWED_CHAT_IDS:
@@ -2151,7 +2013,6 @@ async def start_support_dialog(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @db_session_for_conversation
 async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Обрабатывает сообщения поддержки."""
     if update.effective_chat.type != "private" and update.effective_chat.id not in ALLOWED_CHAT_IDS:
         await update.message.reply_text("Бот не работает в этом чате. Используйте его в разрешенных группах или в личных сообщениях.")
         return ConversationHandler.END
@@ -2176,7 +2037,6 @@ async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 
 @db_session_for_conversation
 async def done_support_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Завершает диалог поддержки и отправляет запрос."""
     if update.effective_chat.type != "private" and update.effective_chat.id not in ALLOWED_CHAT_IDS:
         await update.message.reply_text("Бот не работает в этом чате. Используйте его в разрешенных группах или в личных сообщениях.")
         return ConversationHandler.END
@@ -2272,7 +2132,6 @@ async def done_support_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE
 @db_session_for_conversation
 @moderator_or_developer_only
 async def handle_support_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Обрабатывает колбэки поддержки."""
     query = update.callback_query
     
     if not query:
@@ -2341,7 +2200,6 @@ async def handle_support_callback(update: Update, context: ContextTypes.DEFAULT_
 @db_session_for_conversation
 @moderator_or_developer_only
 async def start_reply_to_support(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Начинает ответ на запрос поддержки."""
     query = update.callback_query
     
     if query and query.data.startswith("support_reply_"):
@@ -2379,7 +2237,6 @@ async def start_reply_to_support(update: Update, context: ContextTypes.DEFAULT_T
 
 @db_session_for_conversation
 async def support_reply_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Отправляет ответ на запрос поддержки."""
     if update.effective_chat.type != "private" and update.effective_chat.id not in ALLOWED_CHAT_IDS:
         await update.message.reply_text("Бот не работает в этом чате. Используйте его в разрешенных группах или в личных сообщениях.")
         return ConversationHandler.END
@@ -2434,7 +2291,6 @@ async def support_reply_message(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.pop('reply_type', None)
     return ConversationHandler.END
 
-# --- ОБНОВЛЕННЫЙ обработчик логирования и статистики с регистронезависимыми хэштегами ---
 @db_session_for_conversation
 @not_banned
 async def log_and_stats_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
@@ -2451,29 +2307,22 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
 
     message_text = update.effective_message.text or update.effective_message.caption
     
-    # Проверяем, находится ли чат в списке для логирования
     should_log = update.effective_chat.id in LOGGING_CHAT_IDS
     
-    # Проверка на пост (содержит хэштег в первых трех ИЛИ последних двух строках)
     if message_text:
         lines = message_text.strip().split('\n')
         
-        # Берем первые 3 строки
         first_lines = lines[:3]
-        # Берем последние 2 строки (если есть)
         last_lines = lines[-2:] if len(lines) >= 2 else []
         
         hashtag = None
         
-        # Сначала ищем хэштег в первых трех строках
         for line in first_lines:
             line = line.strip()
             if line.startswith('#'):
-                # Извлекаем хэштег (первое слово без #)
                 hashtag = line.split()[0][1:] if line.split()[0].startswith('#') else None
                 break
         
-        # Если не нашли в первых трех, ищем в последних двух
         if not hashtag:
             for line in last_lines:
                 line = line.strip()
@@ -2501,7 +2350,6 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
             user_has_role = False
             if hashtag:
                 try:
-                    # Проверяем, есть ли у пользователя роль с таким хэштегом (регистронезависимо)
                     user_role = session.query(Role).filter(
                         Role.user_id == user_db.id,
                         func.lower(Role.hashtag) == func.lower(hashtag)
@@ -2511,9 +2359,7 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                     logger.error(f"Ошибка при проверке роли: {e}")
                     user_has_role = False
             
-            # Если пост проходит все фильтры И пользователь имеет ТАКУЮ роль
             if all([has_hashtag, has_min_length, has_max_emoji, has_no_special_chars]) and user_has_role:
-                # Сохраняем пост в БД
                 new_post = Post(
                     user=user_db,
                     content=post_text,
@@ -2523,10 +2369,8 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                 )
                 session.add(new_post)
                 
-                # Увеличиваем счетчик постов
                 stats.post_count += 1
                 
-                # Обновляем активность роли
                 try:
                     user_role.last_active = datetime.date.today()
                     user_role.last_warning_sent = None
@@ -2534,7 +2378,6 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                 except Exception as e:
                     logger.error(f"Ошибка при обновлении активности роли: {e}")
                 
-                # Логируем как пост (только в разрешенных чатах)
                 if should_log and logging_active:
                     log_entry = (
                         f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
@@ -2546,8 +2389,6 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                     with open("log.txt", "a", encoding="utf-8") as f:
                         f.write(log_entry)
             else:
-                # Пост не проходит фильтры - НЕ УДАЛЯЕМ, просто логируем
-                # как обычное сообщение если включено логирование
                 if should_log and logging_active:
                     log_entry = (
                         f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
@@ -2559,9 +2400,7 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                     with open("log.txt", "a", encoding="utf-8") as f:
                         f.write(log_entry)
     
-    # Обычное логирование (не пост) - только в разрешенных чатах
     elif should_log and logging_active and message_text:
-        # Проверяем, что это не пост (нет хэштега ни в первых трех, ни в последних двух строках)
         lines = message_text.strip().split('\n')
         first_lines = lines[:3]
         last_lines = lines[-2:] if len(lines) >= 2 else []
@@ -2589,12 +2428,9 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
             with open("log.txt", "a", encoding="utf-8") as f:
                 f.write(log_entry)
 
-# --- НОВАЯ КОМАНДА: Проверка постов ---
 @db_session
 @moderator_or_developer_only
 async def check_post_stats(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Проверяет статистику постов пользователя."""
-    
     if len(context.args) == 0:
         user_tg = update.effective_user
         user_db = get_or_create_user(session, user_tg.id, user_tg.username)
@@ -2664,7 +2500,6 @@ async def check_post_stats(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     
     await update.message.reply_text(response)
 
-# --- Фоновая задача для проверки неактивных ролей с предупреждениями ---
 async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE) -> None:
     session = get_session_for_job()
     try:
@@ -2673,7 +2508,6 @@ async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE)
         warning_threshold = today - datetime.timedelta(days=7)
         removal_threshold = today - datetime.timedelta(days=10)
         
-        # Роли для предупреждения (от 7 до 10 дней неактивности)
         roles_to_warn = session.query(Role).filter(
             Role.last_active < warning_threshold,
             Role.last_active >= removal_threshold,
@@ -2694,7 +2528,6 @@ async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE)
                 except TelegramError as e:
                     logger.warning(f"Не удалось отправить предупреждение пользователю {user.id}: {e}")
         
-        # Роли для удаления (более 10 дней неактивности)
         roles_to_remove = session.query(Role).filter(Role.last_active < removal_threshold).all()
         
         for role in roles_to_remove:
@@ -2702,7 +2535,6 @@ async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE)
             role_name = role.name
             hashtag = role.hashtag
             
-            # Удаляем роль
             session.delete(role)
             
             if user:
@@ -2722,7 +2554,6 @@ async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE)
     finally:
         session.close()
 
-# --- СОЛОРБОАРД ФУНКЦИИ ---
 @db_session
 @not_banned
 async def solor_board_list(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
@@ -2743,7 +2574,6 @@ async def solor_board_list(update: Update, context: ContextTypes.DEFAULT_TYPE, s
             
             roles_str = ""
             if entry.roles_needed and isinstance(entry.roles_needed, list):
-                # Фильтруем пустые строки и корректно форматируем
                 valid_roles = [role for role in entry.roles_needed if role and isinstance(role, str) and role.strip()]
                 if valid_roles:
                     roles_str = ", ".join(valid_roles)
@@ -2815,11 +2645,10 @@ async def solor_roles_step(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     roles_input = update.message.text.strip()
     roles_needed = []
     if roles_input.lower() != 'нет':
-        # Разделяем по запятым и убираем лишние пробелы и символы #
         roles_list = roles_input.split(',')
         for role in roles_list:
             role_clean = role.strip().lstrip('#').strip()
-            if role_clean:  # Добавляем только непустые строки
+            if role_clean:
                 roles_needed.append(role_clean)
 
     user_tg = update.effective_user
@@ -3006,7 +2835,6 @@ async def handle_solor_decline_callback(update: Update, context: ContextTypes.DE
     context.user_data.pop(f'solor_invite_message_id_{entry_id}_{inviter_id}', None)
     context.user_data.pop(f'solor_invite_chat_id_{entry_id}_{inviter_id}', None)
 
-# --- БАЗОВЫЕ КОМАНДЫ ---
 @db_session
 @developer_only
 async def add_status(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
@@ -3025,12 +2853,9 @@ async def add_status(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     else:
         await update.message.reply_text(f"Пользователь '{target_identifier}' не найден.")
 
-# --- УПРОЩЕННАЯ МАССОВАЯ КОМАНДА ДОБАВЛЕНИЯ РОЛЕЙ ---
 @db_session
 @moderator_or_developer_only
 async def add_role_mass(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Упрощенная массовая выдача ролей"""
-    
     if len(context.args) < 3:
         help_text = """Упрощенная массовая выдача ролей:
 
@@ -3046,17 +2871,14 @@ async def add_role_mass(update: Update, context: ContextTypes.DEFAULT_TYPE, sess
         await update.message.reply_text(help_text)
         return
     
-    # Объединяем все аргументы в одну строку
     input_text = " ".join(context.args)
     
-    # Разделяем по запятой для разных пользователей
     user_entries = [entry.strip() for entry in input_text.split(',') if entry.strip()]
     
     results = []
     errors = []
     
     for entry in user_entries:
-        # Парсим запись: @username #хэштег НазваниеРоли
         parts = entry.split()
         if len(parts) < 3:
             errors.append(f"Неверный формат: {entry}")
@@ -3066,13 +2888,11 @@ async def add_role_mass(update: Update, context: ContextTypes.DEFAULT_TYPE, sess
         hashtag = parts[1].lstrip('#')
         role_name = ' '.join(parts[2:])
         
-        # Находим пользователя
         user_db = get_user_by_identifier_db(session, username)
         if not user_db:
             errors.append(f"Пользователь {username} не найден")
             continue
         
-        # Проверяем, нет ли уже такой роли у пользователя (по хэштегу, без учета регистра)
         existing_role = session.query(Role).filter(
             Role.user_id == user_db.id,
             func.lower(Role.hashtag) == func.lower(hashtag)
@@ -3082,7 +2902,6 @@ async def add_role_mass(update: Update, context: ContextTypes.DEFAULT_TYPE, sess
             errors.append(f"У пользователя {username} уже есть роль с хэштегом #{hashtag}")
             continue
         
-        # Добавляем роль
         new_role = Role(
             user=user_db,
             name=role_name,
@@ -3091,7 +2910,6 @@ async def add_role_mass(update: Update, context: ContextTypes.DEFAULT_TYPE, sess
         session.add(new_role)
         results.append(f"Пользователю @{user_db.username or user_db.id} выдана роль {role_name} (#{hashtag})")
     
-    # Формируем отчет
     report = "Результат выдачи ролей:\n"
     if results:
         report += "\n".join(results) + "\n"
@@ -3116,7 +2934,6 @@ async def delete_role(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
         await update.message.reply_text(f"Пользователь '{target_identifier}' не найден.")
         return
 
-    # Ищем роль с учетом регистра хэштега
     role_to_delete = session.query(Role).filter(
         Role.user_id == user_db.id,
         func.lower(Role.hashtag) == func.lower(hashtag)
@@ -3156,7 +2973,6 @@ async def check_roles(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
     roles = session.query(Role).filter(Role.user_id == user_db.id).all()
 
     if roles:
-        # Форматируем роли в столбик
         roles_text = f"Роли пользователя @{user_db.username or user_db.id}:\n\n"
         for i, role in enumerate(roles):
             roles_text += f"{i+1}. {role.name} - #{role.hashtag}\n"
@@ -3165,7 +2981,6 @@ async def check_roles(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
     else:
         await update.message.reply_text(f"У пользователя @{user_db.username or user_db.id} нет активных ролей.")
 
-# Команды логгирования (работают без сессии)
 async def start_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session = SessionLocal()
     try:
@@ -3374,15 +3189,10 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     except TelegramError as e:
         logger.warning(f"Не удалось уведомить пользователя {user_db.id} о разбане: {e}")
 
-# --- КОМАНДА ПЕРЕВОДА СРЕДСТВ ---
 @db_session
 @not_banned
 async def send_money(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Переводит средства другому пользователю."""
-    
-    # Проверяем, является ли сообщение ответом на другое сообщение
     if update.message.reply_to_message:
-        # Получаем отправителя из ответа
         reply_to = update.message.reply_to_message
         if reply_to.from_user:
             target_identifier = str(reply_to.from_user.id)
@@ -3390,7 +3200,6 @@ async def send_money(update: Update, context: ContextTypes.DEFAULT_TYPE, session
             await update.message.reply_text("Не удалось определить пользователя, которому нужно отправить средства.")
             return
         
-        # Получаем аргументы (сумма и валюта)
         if len(context.args) < 2:
             await update.message.reply_text("Использование (в ответ на сообщение): /send [сумма] [ON/OP]")
             return
@@ -3398,7 +3207,6 @@ async def send_money(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         amount_str = context.args[0]
         currency = context.args[1].upper()
     else:
-        # Обычный вызов команды с аргументами
         if len(context.args) < 3:
             await update.message.reply_text("Использование: /send [получатель] [сумма] [ON/OP]")
             return
@@ -3407,12 +3215,10 @@ async def send_money(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         amount_str = context.args[1]
         currency = context.args[2].upper()
     
-    # Проверяем валюту
     if currency not in ["ON", "OP"]:
         await update.message.reply_text("Валюта должна быть ON или OP.")
         return
     
-    # Проверяем сумму
     try:
         amount = int(amount_str)
         if amount <= 0:
@@ -3422,11 +3228,9 @@ async def send_money(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         await update.message.reply_text("Сумма должна быть числом.")
         return
     
-    # Получаем отправителя
     sender_tg = update.effective_user
     sender_db = get_or_create_user(session, sender_tg.id, sender_tg.username)
     
-    # Получаем получателя
     recipient_db = get_user_by_identifier_db(session, target_identifier)
     if not recipient_db:
         await update.message.reply_text(f"Получатель '{target_identifier}' не найден.")
@@ -3436,23 +3240,19 @@ async def send_money(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         await update.message.reply_text("Нельзя отправить средства самому себе.")
         return
     
-    # Проверяем баланс отправителя
     if currency == "ON":
         if sender_db.on_balance < amount:
             await update.message.reply_text(f"Недостаточно ОН. Ваш баланс: {sender_db.on_balance} ОН")
             return
-        # Переводим средства
         sender_db.on_balance -= amount
         recipient_db.on_balance += amount
-    else:  # currency == "OP"
+    else:
         if sender_db.op_balance < amount:
             await update.message.reply_text(f"Недостаточно ОП. Ваш баланс: {sender_db.op_balance} ОП")
             return
-        # Переводим средства
         sender_db.op_balance -= amount
         recipient_db.op_balance += amount
     
-    # Отправляем уведомление получателю
     try:
         await context.bot.send_message(
             chat_id=recipient_db.id,
@@ -3470,11 +3270,9 @@ async def send_money(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         f"Ваш баланс {currency}: {sender_db.on_balance if currency == 'ON' else sender_db.op_balance}"
     )
 
-# --- ДИАЛОГ СОЗДАНИЯ ЧЕКА ---
 @db_session_for_conversation
 @not_banned
 async def start_create_check(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Начинает процесс создания чека."""
     user_tg = update.effective_user
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
     
@@ -3487,7 +3285,6 @@ async def start_create_check(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 @db_session_for_conversation
 async def create_check_amount(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает сумму чека."""
     try:
         amount = int(update.message.text.strip())
         if amount <= 0:
@@ -3506,7 +3303,6 @@ async def create_check_amount(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @db_session_for_conversation
 async def create_check_currency(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает валюту чека."""
     currency = update.message.text.strip().upper()
     if currency not in ["ON", "OP"]:
         await update.message.reply_text("Валюта должна быть ON или OP. Попробуйте еще раз:")
@@ -3522,7 +3318,6 @@ async def create_check_currency(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Ошибка: создатель не найден. Начните заново.")
         return ConversationHandler.END
     
-    # Проверяем баланс
     amount = context.user_data['check_amount']
     if currency == "ON":
         if creator.on_balance < amount:
@@ -3533,7 +3328,7 @@ async def create_check_currency(update: Update, context: ContextTypes.DEFAULT_TY
                 f"Введите другую сумму или отмените создание чека."
             )
             return STATE_CREATE_CHECK_AMOUNT
-    else:  # currency == "OP"
+    else:
         if creator.op_balance < amount:
             await update.message.reply_text(
                 f"У вас недостаточно ОП для создания чека.\n"
@@ -3552,7 +3347,6 @@ async def create_check_currency(update: Update, context: ContextTypes.DEFAULT_TY
 
 @db_session_for_conversation
 async def create_check_max_uses(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает максимальное количество использований чека."""
     try:
         max_uses = int(update.message.text.strip())
         if max_uses < 0:
@@ -3563,7 +3357,7 @@ async def create_check_max_uses(update: Update, context: ContextTypes.DEFAULT_TY
         return STATE_CREATE_CHECK_MAX_USES
     
     if max_uses == 0:
-        max_uses = 999999  # Большое число для "неограниченного"
+        max_uses = 999999
     
     context.user_data['check_max_uses'] = max_uses
     
@@ -3574,7 +3368,6 @@ async def create_check_max_uses(update: Update, context: ContextTypes.DEFAULT_TY
 
 @db_session_for_conversation
 async def create_check_password(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает пароль чека."""
     password = update.message.text.strip()
     if password.lower() == 'нет':
         password = None
@@ -3588,7 +3381,6 @@ async def create_check_password(update: Update, context: ContextTypes.DEFAULT_TY
 
 @db_session_for_conversation
 async def create_check_description(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    """Получает описание чека и завершает создание."""
     description = update.message.text.strip()
     if description.lower() == 'нет':
         description = None
@@ -3603,16 +3395,14 @@ async def create_check_description(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("Ошибка: создатель не найден. Начните заново.")
         return ConversationHandler.END
     
-    # Снимаем средства с создателя
     amount = context.user_data['check_amount']
     currency = context.user_data['check_currency']
     
     if currency == "ON":
         creator.on_balance -= amount
-    else:  # currency == "OP"
+    else:
         creator.op_balance -= amount
     
-    # Создаем чек
     new_check = Check(
         creator=creator,
         amount=amount,
@@ -3622,7 +3412,7 @@ async def create_check_description(update: Update, context: ContextTypes.DEFAULT
         password=context.user_data['check_password']
     )
     session.add(new_check)
-    session.flush()  # Получаем ID и уникальный код
+    session.flush()
     
     max_uses_display = "Неограниченно" if context.user_data['check_max_uses'] == 999999 else context.user_data['check_max_uses']
     
@@ -3636,18 +3426,14 @@ async def create_check_description(update: Update, context: ContextTypes.DEFAULT
         f"Ваш баланс {currency}: {creator.on_balance if currency == 'ON' else creator.op_balance}"
     )
     
-    # Очищаем данные
     for key in ['check_creator_id', 'check_amount', 'check_currency', 'check_max_uses', 'check_password']:
         context.user_data.pop(key, None)
     
     return ConversationHandler.END
 
-# --- КОМАНДА ПОЛУЧЕНИЯ ЧЕКА ---
 @db_session
 @not_banned
 async def take_check(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Активирует чек."""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /takecheck [код_чека]")
         return
@@ -3667,7 +3453,6 @@ async def take_check(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         await update.message.reply_text("Этот чек больше не активен.")
         return
     
-    # Проверяем пароль, если он есть
     if check.password:
         if len(context.args) < 2:
             await update.message.reply_text("Для этого чека требуется пароль. Использование: /takecheck [код_чека] [пароль]")
@@ -3678,18 +3463,15 @@ async def take_check(update: Update, context: ContextTypes.DEFAULT_TYPE, session
             await update.message.reply_text("Неверный пароль.")
             return
     
-    # Проверяем, не пытается ли создатель активировать свой же чек
     if user_db.id == check.creator_id:
         await update.message.reply_text("Вы не можете активировать свой собственный чек.")
         return
     
-    # Активируем чек
     check.current_uses += 1
     
-    # Зачисляем средства
     if check.currency == "ON":
         user_db.on_balance += check.amount
-    else:  # currency == "OP"
+    else:
         user_db.op_balance += check.amount
     
     await update.message.reply_text(
@@ -3698,7 +3480,6 @@ async def take_check(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         f"Ваш баланс {check.currency}: {user_db.on_balance if check.currency == 'ON' else user_db.op_balance}"
     )
     
-    # Уведомляем создателя чека
     try:
         creator = session.query(User).filter(User.id == check.creator_id).first()
         if creator:
@@ -3709,12 +3490,9 @@ async def take_check(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     except TelegramError as e:
         logger.warning(f"Не удалось уведомить создателя чека {check.creator_id}: {e}")
 
-# --- КОМАНДА СПИСКА ЧЕКОВ ---
 @db_session
 @not_banned
 async def list_checks(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Показывает активные чеки пользователя."""
-    
     user_tg = update.effective_user
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
     
@@ -3740,12 +3518,9 @@ async def list_checks(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
     
     await update.message.reply_text(response)
 
-# --- КОМАНДА УДАЛЕНИЯ ЧЕКА ---
 @db_session
 @not_banned
 async def delete_check(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Удаляет чек."""
-    
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /deletecheck [код_чека]")
         return
@@ -3761,16 +3536,14 @@ async def delete_check(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
         await update.message.reply_text("Чек с таким кодом не найден.")
         return
     
-    # Проверяем права
     if user_db.id != check.creator_id and not user_db.is_developer:
         await update.message.reply_text("Вы можете удалять только свои чеки.")
         return
     
-    # Возвращаем средства создателю, если чек не был использован
     if check.current_uses == 0:
         if check.currency == "ON":
             user_db.on_balance += check.amount
-        else:  # currency == "OP"
+        else:
             user_db.op_balance += check.amount
     
     session.delete(check)
@@ -3780,7 +3553,6 @@ async def delete_check(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
         f"{'Средства возвращены на ваш баланс.' if check.current_uses == 0 else ''}"
     )
 
-# --- Обработчик кнопок ---
 @db_session
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     query = update.callback_query
@@ -3829,7 +3601,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
     else:
         await query.answer(f"Неизвестное действие: {data}")
 
-# --- Обработчик неизвестных сообщений ---
 async def handle_unknown_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_chat.type == "private":
         if update.message and update.message.text and not update.message.text.startswith('/'):
@@ -3842,16 +3613,13 @@ async def handle_unknown_private_message(update: Update, context: ContextTypes.D
             except TelegramError:
                 pass
 
-# --- Главная функция ---
 async def post_init(application: Application) -> None:
-    """Функция, которая выполняется после инициализации бота."""
     try:
         await application.bot.send_message(chat_id=-1003431402721, text="БОТ СЕЙЧАС ВКЛЮЧЕН!")
     except Exception as e:
         logger.error(f"Не удалось отправить сообщение о включении бота: {e}")
 
 async def post_shutdown(application: Application) -> None:
-    """Функция, которая выполняется перед выключением бота."""
     try:
         await application.bot.send_message(chat_id=-1003431402721, text="БОТ СЕЙЧАС ВЫКЛЮЧАЕТСЯ!")
     except Exception as e:
@@ -3887,7 +3655,6 @@ def main() -> None:
 
     allowed_chats_filter = ChatFilter(ALLOWED_CHAT_IDS)
 
-    # --- Диалог Анкеты ---
     anketa_conversation = ConversationHandler(
         entry_points=[
             CommandHandler("sendanketa", send_anketa_start, filters=allowed_chats_filter),
@@ -3905,7 +3672,6 @@ def main() -> None:
     )
     application.add_handler(anketa_conversation)
 
-    # --- Диалог Добавления Награды ---
     add_nagrad_conversation = ConversationHandler(
         entry_points=[
             CommandHandler("addnagrad", start_add_nagrad, filters=allowed_chats_filter),
@@ -3925,7 +3691,6 @@ def main() -> None:
     )
     application.add_handler(add_nagrad_conversation)
 
-    # --- Диалог Создания Чека ---
     create_check_conversation = ConversationHandler(
         entry_points=[
             CommandHandler("createcheck", start_create_check, filters=allowed_chats_filter),
@@ -3945,7 +3710,6 @@ def main() -> None:
     )
     application.add_handler(create_check_conversation)
 
-    # --- Диалог Поддержки ---
     support_conversation = ConversationHandler(
         entry_points=[
             CommandHandler("support", start_support_dialog, filters=allowed_chats_filter),
@@ -3965,7 +3729,6 @@ def main() -> None:
     )
     application.add_handler(support_conversation)
 
-    # --- Диалог СолорБоарда ---
     solor_board_conversation = ConversationHandler(
         entry_points=[
             CommandHandler("solorboard", solor_board_list, filters=allowed_chats_filter),
@@ -3984,7 +3747,6 @@ def main() -> None:
     )
     application.add_handler(solor_board_conversation)
 
-    # --- Диалог отправки INFO ---
     send_info_conversation = ConversationHandler(
         entry_points=[
             CommandHandler("SendInfo", start_send_info, filters=allowed_chats_filter),
@@ -4001,7 +3763,6 @@ def main() -> None:
     )
     application.add_handler(send_info_conversation)
 
-    # --- Основные команды ---
     application.add_handler(CommandHandler("start", start, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("help", help_command, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("profile", profile, filters=allowed_chats_filter))
@@ -4009,28 +3770,23 @@ def main() -> None:
     application.add_handler(CommandHandler("addstatus", add_status, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("check", check_roles, filters=allowed_chats_filter))
     
-    # ИНФО команды
     application.add_handler(CommandHandler("Info", info_command, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("InfoON", info_on, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("InfoOFF", info_off, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("deleteinfopost", delete_info_post, filters=allowed_chats_filter))
     
-    # УПРОЩЕННАЯ МАССОВАЯ ВЫДАЧА РОЛЕЙ
     application.add_handler(CommandHandler("add", add_role_mass, filters=allowed_chats_filter))
     
     application.add_handler(CommandHandler("delete", delete_role, filters=allowed_chats_filter))
     
-    # НОВЫЕ КОМАНДЫ
     application.add_handler(CommandHandler("deletesolorb", delete_solor_board_entry, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("checkpost", check_post_stats, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("CheckRole", check_role, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("reset", reset_user, filters=allowed_chats_filter))
     
-    # Команды накрутки баланса
     application.add_handler(CommandHandler("QyqyqysON", qyqyqys_on, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("QyqyqysOP", qyqyqys_op, filters=allowed_chats_filter))
     
-    # КОМАНДЫ НАГРАД (общедоступные)
     application.add_handler(CommandHandler("checknagrad", check_nagrad, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("sellnagrad", sell_nagrad, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("Nagrada_On", nagrada_on, filters=allowed_chats_filter))
@@ -4039,19 +3795,16 @@ def main() -> None:
     application.add_handler(CommandHandler("SendNagrada", send_nagrada, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("Nagrada", get_nagrada_details, filters=allowed_chats_filter))
     
-    # КОМАНДЫ ЧЕКОВ
     application.add_handler(CommandHandler("takecheck", take_check, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("listchecks", list_checks, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("deletecheck", delete_check, filters=allowed_chats_filter))
     
-    # Базовые команды (доступны всем)
     application.add_handler(CommandHandler("stata", stata, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("allstata", all_stata, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("links", links, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("ban", ban_user, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("unban", unban_user, filters=allowed_chats_filter))
 
-    # Команды логгирования (простые)
     application.add_handler(CommandHandler("startlog", start_log, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("stoplog", stop_log, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("filelog", file_log, filters=allowed_chats_filter))
@@ -4059,26 +3812,22 @@ def main() -> None:
     application.add_handler(CommandHandler("stopfilter", stop_filter, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("qyqyqs", qyqyqs, filters=allowed_chats_filter))
 
-    # SolorBoard contact
     application.add_handler(MessageHandler(
         filters.Regex(r"^/solor_contact_(\d+)$") & allowed_chats_filter,
         solor_contact
     ))
 
-    # Обработчики кнопок
     application.add_handler(CallbackQueryHandler(handle_anketa_callback, pattern="^anketa_"))
     application.add_handler(CallbackQueryHandler(handle_support_callback, pattern="^support_end_dialog_"))
     application.add_handler(CallbackQueryHandler(handle_solor_invite_callback, pattern="^solor_invite_"))
     application.add_handler(CallbackQueryHandler(handle_solor_accept_callback, pattern="^solor_accept_"))
     application.add_handler(CallbackQueryHandler(handle_solor_decline_callback, pattern="^solor_decline_"))
 
-    # Общий обработчик кнопок
     application.add_handler(CallbackQueryHandler(
         button_handler,
         pattern="^(?!support_reply_|support_end_dialog_|solor_invite_|solor_accept_|solor_decline_|anketa_).*$"
     ))
 
-        # Логирование и статистика
     application.add_handler(MessageHandler(
         (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL) & 
         filters.ChatType.GROUPS & allowed_chats_filter, 
@@ -4090,16 +3839,11 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_unknown_private_message))
 
     logger.info("Бот запущен...")
-    logger.info("Ожидание завершения старого процесса...")
-    time.sleep(95)  # Ждем 95 секунд
-
-    # Старая строка запуска бота должна быть ЗДЕСЬ
     application.run_polling(allowed_updates=Update.ALL_TYPES)
     logger.info("Бот остановлен.")
     
     save_bot_status()
 
-# ========== ВЕБ-СЕРВЕР ДЛЯ RENDER ==========
 from flask import Flask, jsonify
 import threading
 import time
