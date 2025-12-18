@@ -8,6 +8,7 @@ import asyncio
 import random
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import Literal, Optional, List, Dict, Union
 
@@ -3862,8 +3863,11 @@ def create_application():
 
     return application
 
+# Создаем Flask приложение один раз
 app = Flask(__name__)
-application = None
+
+# Глобальная переменная для хранения приложения бота
+telegram_application = None
 
 @app.route('/')
 def home():
@@ -3877,31 +3881,54 @@ def health():
 def ping():
     return "pong"
 
+def process_update_sync(update):
+    """Синхронная обертка для асинхронной обработки обновления"""
+    if telegram_application is None:
+        logger.error("Приложение бота не инициализировано")
+        return
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        loop.run_until_complete(telegram_application.process_update(update))
+    except Exception as e:
+        logger.error(f"Ошибка при обработке обновления: {e}")
+    finally:
+        loop.close()
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Обработчик вебхука от Telegram"""
-    if request.method == 'POST':
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        asyncio.run_coroutine_threadsafe(application.process_update(update), application._loop)
+    from flask import request
+    if request.method == 'POST' and telegram_application is not None:
+        update = Update.de_json(request.get_json(force=True), telegram_application.bot)
+        
+        # Используем ThreadPoolExecutor для обработки асинхронных вызовов
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(process_update_sync, update)
+            try:
+                future.result(timeout=10)
+            except Exception as e:
+                logger.error(f"Ошибка при обработке вебхука: {e}")
+    
     return 'ok'
 
-# ... (весь предыдущий код остается без изменений до функций run_bot и run_web_server)
-
-def run_bot():
-    """Запуск бота с вебхуками"""
-    global application
+def setup_bot():
+    """Настройка бота и вебхука"""
+    global telegram_application
     logger.info("Инициализация бота...")
     
-    application = create_application()
-    if application is None:
+    telegram_application = create_application()
+    if telegram_application is None:
         logger.error("Не удалось создать приложение бота")
-        return
+        return False
     
     # Удаляем старый вебхук
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.bot.delete_webhook())
+        loop.run_until_complete(telegram_application.bot.delete_webhook())
         logger.info("Старый вебхук удален")
     except Exception as e:
         logger.warning(f"Не удалось удалить старый вебхук: {e}")
@@ -3910,7 +3937,7 @@ def run_bot():
     render_url = os.getenv('RENDER_EXTERNAL_URL', '')
     if not render_url:
         logger.error("RENDER_EXTERNAL_URL не установлен!")
-        return
+        return False
     
     webhook_url = f"{render_url}/webhook"
     logger.info(f"Настройка вебхука на URL: {webhook_url}")
@@ -3919,63 +3946,37 @@ def run_bot():
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.bot.set_webhook(url=webhook_url, drop_pending_updates=True))
+        loop.run_until_complete(telegram_application.bot.set_webhook(url=webhook_url, drop_pending_updates=True))
         logger.info(f"Вебхук установлен: {webhook_url}")
         
         # Проверяем статус вебхука
-        webhook_info = loop.run_until_complete(application.bot.get_webhook_info())
+        webhook_info = loop.run_until_complete(telegram_application.bot.get_webhook_info())
         logger.info(f"Статус вебхука: {webhook_info.url}")
     except Exception as e:
         logger.error(f"Ошибка при установке вебхука: {e}")
-        return
+        return False
     
     logger.info("Бот запущен в режиме вебхука и готов к работе!")
-    return application
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    """Обработчик вебхука от Telegram"""
-    if request.method == 'POST' and application is not None:
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        
-        # Используем ThreadPoolExecutor для обработки асинхронных вызовов
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(process_update_sync, update)
-            future.result(timeout=10)
-    
-    return 'ok'
-
-def process_update_sync(update):
-    """Синхронная обертка для асинхронной обработки обновления"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    try:
-        loop.run_until_complete(application.process_update(update))
-    except Exception as e:
-        logger.error(f"Ошибка при обработке обновления: {e}")
-    finally:
-        loop.close()
+    return True
 
 def run_web_server():
     """Запускает Flask сервер"""
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-def main_with_web():
-    """Запускает веб-сервер и бота с вебхуками"""
+def main():
+    """Главная функция запуска"""
     logger.info("Запуск Multiverse-RP бота...")
     
-    # Запускаем бота
-    bot_app = run_bot()
-    if not bot_app:
-        logger.error("Не удалось запустить бота. Завершение работы.")
+    # Настраиваем бота
+    if not setup_bot():
+        logger.error("Не удалось настроить бота. Завершение работы.")
         return
     
-    # Запускаем веб-сервер Flask в основном потоке
+    # Запускаем веб-сервер Flask
     run_web_server()
 
 if __name__ == "__main__":
-    main_with_web()
+    main()
  
        
