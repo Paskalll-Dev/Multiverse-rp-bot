@@ -130,7 +130,9 @@ class StringList(TypeDecorator):
         if not isinstance(value, list):
             logger.warning(f"StringList process_bind_param received non-list value: {type(value)} - {value}. Wrapping in a list.")
             value = [value]
-        return json.dumps(value)
+        # Убедимся, что все элементы - строки
+        value = [str(item) if item is not None else '' for item in value]
+        return json.dumps(value, ensure_ascii=False)
 
     def process_result_param(self, value, dialect):
         if value is None:
@@ -151,7 +153,7 @@ class StringList(TypeDecorator):
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
     username = Column(String, index=True)
     on_balance = Column(Integer, default=0)
     op_balance = Column(Integer, default=0)
@@ -180,8 +182,8 @@ class User(Base):
 
 class Role(Base):
     __tablename__ = "roles"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
     name = Column(String)
     hashtag = Column(String, index=True)
     last_active = Column(Date, default=datetime.date.today)
@@ -191,8 +193,8 @@ class Role(Base):
 
 class Check(Base):
     __tablename__ = "checks"
-    id = Column(Integer, primary_key=True, index=True)
-    creator_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    creator_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
     amount = Column(Integer)
     currency = Column(String, default="ON")
     description = Column(String, nullable=True)
@@ -210,8 +212,8 @@ class Check(Base):
 
 class PlayerBoardEntry(Base):
     __tablename__ = "player_board_entries"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
     message = Column(Text)
     roles_needed = Column(StringList)
     created_at = Column(DateTime, default=datetime.datetime.now)
@@ -220,8 +222,8 @@ class PlayerBoardEntry(Base):
 
 class MessageStat(Base):
     __tablename__ = "message_stats"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    user_id = Column(BigInteger, ForeignKey("users.id"), unique=True)  # Изменено с Integer на BigInteger
     message_count = Column(Integer, default=0)
     post_count = Column(Integer, default=0)
     last_updated = Column(DateTime, default=datetime.datetime.now)
@@ -230,7 +232,7 @@ class MessageStat(Base):
 
 class NagradDefinition(Base):
     __tablename__ = "nagrad_definitions"
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
     name = Column(String, unique=True, index=True)
     description = Column(Text, nullable=True)
     photo_file_id = Column(String, nullable=True)
@@ -240,12 +242,12 @@ class NagradDefinition(Base):
 
 class UserNagrad(Base):
     __tablename__ = "user_nagrads"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    nagrad_definition_id = Column(Integer, ForeignKey("nagrad_definitions.id"))
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
+    nagrad_definition_id = Column(BigInteger, ForeignKey("nagrad_definitions.id"))  # Изменено с Integer на BigInteger
     unique_code = Column(String, unique=True, index=True, default=lambda: str(uuid.uuid4())[:8])
     created_at = Column(DateTime, default=datetime.datetime.now)
-    given_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    given_by_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)  # Изменено с Integer на BigInteger
 
     user = relationship("User", back_populates="user_nagrads", foreign_keys=[user_id])
     definition = relationship("NagradDefinition", back_populates="user_nagrads")
@@ -253,8 +255,8 @@ class UserNagrad(Base):
 
 class SupportRequest(Base):
     __tablename__ = "support_requests"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
     request_content = Column(StringList)
     status = Column(String, default="open")
     created_at = Column(DateTime, default=datetime.datetime.now)
@@ -264,8 +266,8 @@ class SupportRequest(Base):
 
 class Post(Base):
     __tablename__ = "posts"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
     content = Column(Text)
     hashtag = Column(String, index=True)
     created_at = Column(DateTime, default=datetime.datetime.now)
@@ -276,8 +278,8 @@ class Post(Base):
 
 class AnketaRequest(Base):
     __tablename__ = "anketa_requests"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    user_id = Column(BigInteger, ForeignKey("users.id"))  # Изменено с Integer на BigInteger
     anketa_content = Column(StringList)
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.datetime.now)
@@ -288,15 +290,116 @@ class AnketaRequest(Base):
 
 class InfoSubscription(Base):
     __tablename__ = "info_subscriptions"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    id = Column(BigInteger, primary_key=True, index=True)  # Изменено с Integer на BigInteger
+    user_id = Column(BigInteger, ForeignKey("users.id"), unique=True)  # Изменено с Integer на BigInteger
     subscribed = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="info_subscriptions")
 
+def update_database_structure():
+    """Обновляет структуру базы данных для PostgreSQL"""
+    session = SessionLocal()
+    try:
+        if DATABASE_URL:
+            logger.info("Проверка структуры базы данных PostgreSQL...")
+            
+            # Проверяем и обновляем типы данных всех ключевых полей
+            tables_to_check = [
+                ('users', 'id', 'BIGINT'),
+                ('player_board_entries', 'id', 'BIGINT'),
+                ('player_board_entries', 'user_id', 'BIGINT'),
+                ('roles', 'id', 'BIGINT'),
+                ('roles', 'user_id', 'BIGINT'),
+                ('checks', 'id', 'BIGINT'),
+                ('checks', 'creator_id', 'BIGINT'),
+                ('message_stats', 'id', 'BIGINT'),
+                ('message_stats', 'user_id', 'BIGINT'),
+                ('nagrad_definitions', 'id', 'BIGINT'),
+                ('user_nagrads', 'id', 'BIGINT'),
+                ('user_nagrads', 'user_id', 'BIGINT'),
+                ('user_nagrads', 'given_by_id', 'BIGINT'),
+                ('support_requests', 'id', 'BIGINT'),
+                ('support_requests', 'user_id', 'BIGINT'),
+                ('posts', 'id', 'BIGINT'),
+                ('posts', 'user_id', 'BIGINT'),
+                ('posts', 'message_id', 'BIGINT'),
+                ('posts', 'chat_id', 'BIGINT'),
+                ('anketa_requests', 'id', 'BIGINT'),
+                ('anketa_requests', 'user_id', 'BIGINT'),
+                ('anketa_requests', 'admin_message_id', 'BIGINT'),
+                ('anketa_requests', 'admin_chat_id', 'BIGINT'),
+                ('info_subscriptions', 'id', 'BIGINT'),
+                ('info_subscriptions', 'user_id', 'BIGINT'),
+            ]
+            
+            for table_name, column_name, target_type in tables_to_check:
+                try:
+                    # Проверяем существование таблицы
+                    result = session.execute(text(f"""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = '{table_name}'
+                        )
+                    """))
+                    table_exists = result.fetchone()[0]
+                    
+                    if not table_exists:
+                        logger.info(f"Таблица {table_name} не существует, пропускаем...")
+                        continue
+                    
+                    # Проверяем существование колонки
+                    result = session.execute(text(f"""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.columns 
+                            WHERE table_name = '{table_name}' 
+                            AND column_name = '{column_name}'
+                        )
+                    """))
+                    column_exists = result.fetchone()[0]
+                    
+                    if not column_exists:
+                        logger.info(f"Колонка {table_name}.{column_name} не существует, пропускаем...")
+                        continue
+                    
+                    # Проверяем текущий тип колонки
+                    result = session.execute(text(f"""
+                        SELECT data_type 
+                        FROM information_schema.columns 
+                        WHERE table_name = '{table_name}' 
+                        AND column_name = '{column_name}'
+                    """))
+                    row = result.fetchone()
+                    
+                    if row and row[0] != target_type.lower():
+                        logger.info(f"Обновление {table_name}.{column_name} с {row[0]} на {target_type}")
+                        try:
+                            session.execute(text(f"""
+                                ALTER TABLE {table_name} 
+                                ALTER COLUMN {column_name} TYPE {target_type}
+                            """))
+                            session.commit()
+                        except Exception as alter_error:
+                            logger.error(f"Ошибка при обновлении {table_name}.{column_name}: {alter_error}")
+                            session.rollback()
+                            
+                except Exception as e:
+                    logger.error(f"Ошибка при проверке/обновлении {table_name}.{column_name}: {e}")
+            
+            session.commit()
+            logger.info("Структура базы данных проверена и обновлена при необходимости")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при обновлении структуры базы данных: {e}")
+        session.rollback()
+    finally:
+        session.close()
+
 def create_tables():
     Base.metadata.create_all(bind=engine)
     logger.info("Таблицы базы данных созданы или уже существуют.")
+    
+    # Обновляем структуру базы данных после создания
+    update_database_structure()
     
     session = SessionLocal()
     try:
@@ -346,21 +449,11 @@ def create_tables():
                         session.execute(text("ALTER TABLE users ADD COLUMN is_anketnik BOOLEAN DEFAULT FALSE"))
                         logger.info("Добавлена колонка is_anketnik в таблицу users.")
                 
-                # Обновляем тип колонок message_id и chat_id в таблице posts на BIGINT для PostgreSQL
-                result = session.execute(text("SELECT data_type FROM information_schema.columns WHERE table_name='posts' AND column_name='message_id'"))
-                row = result.fetchone()
-                if row and row[0] != 'bigint':
-                    session.execute(text("ALTER TABLE posts ALTER COLUMN message_id TYPE BIGINT"))
-                    logger.info("Исправлен тип колонки message_id на BIGINT в таблице posts.")
-                
-                result = session.execute(text("SELECT data_type FROM information_schema.columns WHERE table_name='posts' AND column_name='chat_id'"))
-                row = result.fetchone()
-                if row and row[0] != 'bigint':
-                    session.execute(text("ALTER TABLE posts ALTER COLUMN chat_id TYPE BIGINT"))
-                    logger.info("Исправлен тип колонки chat_id на BIGINT в таблице posts.")
+                session.commit()
                     
             except Exception as e:
                 logger.error(f"Ошибка при проверке/добавлении колонок в PostgreSQL: {e}")
+                session.rollback()
         else:
             # Для SQLite используем старый код
             result = session.execute(text("PRAGMA table_info(message_stats)"))
@@ -3714,6 +3807,9 @@ def main() -> None:
         return
 
     application = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    
+    # Увеличим таймауты для Render
+    application.bot._request[0]._client.timeout = 30.0
 
     job_queue = application.job_queue
     job_queue.run_repeating(check_inactive_roles_with_warnings,
