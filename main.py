@@ -1773,21 +1773,26 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_text("Вы не отправили ни одного сообщения для анкеты. Запрос отменен.")
         return ConversationHandler.END
 
+    # Сохраняем как JSON строку
+    anketa_json = json.dumps(anketa_content_list, ensure_ascii=False)
+    
     new_anketa = AnketaRequest(
         user=user_db,
-        anketa_content=anketa_content_list,
+        anketa_content=anketa_json,  # Сохраняем как JSON строку
         status="pending"
     )
     session.add(new_anketa)
     session.commit()
     session.refresh(new_anketa)
 
+    # Получаем всех анкетников и разработчиков
     anketniks = session.query(User).filter(
         or_(User.is_anketnik == True, User.is_developer == True)
     ).all()
 
     for anketnik in anketniks:
         try:
+            # Отправляем основное сообщение с кнопками
             admin_message_text = f"Новая анкета от @{user_tg.username or user_tg.id} (ID: {user_tg.id}):"
 
             keyboard = [
@@ -1805,6 +1810,7 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 reply_markup=reply_markup
             )
 
+            # Отправляем контент анкеты
             for item in anketa_content_list:
                 try:
                     if item['type'] == 'text':
@@ -2009,8 +2015,9 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
     user = anketa.user
     admin_username = query.from_user.username or query.from_user.id
 
+    # Получаем контент анкеты
     anketa_content = anketa.anketa_content
-
+    
     if action == "approve":
         anketa.status = "approved"
 
@@ -2023,86 +2030,75 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning(f"Не удалось уведомить пользователя {user.id} об одобрении анкеты: {e}")
 
         try:
+            # Отправляем оповещение в канал
             await send_to_channel_with_retry(
                 context=context,
                 chat_id=ANKET_CHANNEL_ID,
                 text=f"Новая анкета от @{user.username or user.id}!"
             )
 
+            # Парсим контент анкеты
             processed_items = []
+            
+            try:
+                if isinstance(anketa_content, str):
+                    # Пытаемся загрузить как JSON
+                    processed_items = json.loads(anketa_content)
+                elif isinstance(anketa_content, list):
+                    processed_items = anketa_content
+                else:
+                    processed_items = []
+            except Exception as e:
+                logger.error(f"Ошибка при парсинге контента анкеты: {e}")
+                processed_items = []
 
-            if isinstance(anketa_content, list):
-                for item in anketa_content:
-                    if isinstance(item, dict):
-                        processed_items.append(item)
-                    elif isinstance(item, str):
-                        try:
-                            if item.startswith('{') and item.endswith('}'):
-                                item_dict = json.loads(item)
-                                processed_items.append(item_dict)
-                            else:
-                                processed_items.append({'type': 'text', 'content': item})
-                        except:
-                            processed_items.append({'type': 'text', 'content': str(item)})
-            else:
-                try:
-                    processed_items = json.loads(anketa_content) if isinstance(anketa_content, str) else anketa_content
-                    if not isinstance(processed_items, list):
-                        processed_items = [processed_items]
-                except:
-                    processed_items = [{'type': 'text', 'content': str(anketa_content)}]
+            # Отправляем контент в канал
+            if processed_items:
+                for item in processed_items:
+                    try:
+                        if isinstance(item, dict):
+                            item_type = item.get('type', '')
+                            content = item.get('content', '')
+                            file_id = item.get('file_id', '')
+                            caption = item.get('caption', '')
 
-            for item in processed_items:
-                try:
-                    if isinstance(item, dict):
-                        item_type = item.get('type', '')
-                        content = item.get('content', '')
-                        file_id = item.get('file_id', '')
-                        caption = item.get('caption', '')
-
-                        if item_type == 'text' and content and content.strip():
-                            await send_to_channel_with_retry(
-                                context=context,
-                                chat_id=ANKET_CHANNEL_ID,
-                                text=content
-                            )
-                        elif item_type == 'photo' and file_id:
-                            await send_to_channel_with_retry(
-                                context=context,
-                                chat_id=ANKET_CHANNEL_ID,
-                                photo=file_id,
-                                caption=caption if caption and caption.strip() else None
-                            )
-                        elif item_type == 'video' and file_id:
-                            await send_to_channel_with_retry(
-                                context=context,
-                                chat_id=ANKET_CHANNEL_ID,
-                                video=file_id,
-                                caption=caption if caption and caption.strip() else None
-                            )
-                        elif item_type == 'animation' and file_id:
-                            await send_to_channel_with_retry(
-                                context=context,
-                                chat_id=ANKET_CHANNEL_ID,
-                                animation=file_id,
-                                caption=caption if caption and caption.strip() else None
-                            )
-                        elif item_type == 'document' and file_id:
-                            await send_to_channel_with_retry(
-                                context=context,
-                                chat_id=ANKET_CHANNEL_ID,
-                                document=file_id,
-                                caption=caption if caption and caption.strip() else None
-                            )
-                    elif isinstance(item, str) and item.strip():
-                        await send_to_channel_with_retry(
-                            context=context,
-                            chat_id=ANKET_CHANNEL_ID,
-                            text=item
-                        )
-                except TelegramError as e:
-                    logger.error(f"Не удалось отправить часть анкеты в канал: {e}")
-                    continue
+                            if item_type == 'text' and content and content.strip():
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    text=content
+                                )
+                            elif item_type == 'photo' and file_id:
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    photo=file_id,
+                                    caption=caption if caption and caption.strip() else None
+                                )
+                            elif item_type == 'video' and file_id:
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    video=file_id,
+                                    caption=caption if caption and caption.strip() else None
+                                )
+                            elif item_type == 'animation' and file_id:
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    animation=file_id,
+                                    caption=caption if caption and caption.strip() else None
+                                )
+                            elif item_type == 'document' and file_id:
+                                await send_to_channel_with_retry(
+                                    context=context,
+                                    chat_id=ANKET_CHANNEL_ID,
+                                    document=file_id,
+                                    caption=caption if caption and caption.strip() else None
+                                )
+                    except TelegramError as e:
+                        logger.error(f"Не удалось отправить часть анкеты в канал: {e}")
+                        continue
 
             await send_to_channel_with_retry(
                 context=context,
