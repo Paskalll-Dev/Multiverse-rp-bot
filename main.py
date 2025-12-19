@@ -31,7 +31,7 @@ from telegram.ext import (
 )
 from telegram.error import TelegramError, TimedOut
 
-TOKEN = os.getenv('TOKEN', '8255764534:AAH6gMVaBXsctXqRUM5VujJM-O-cWKuiuRM')
+TOKEN = os.getenv('TOKEN')
 DEVELOPER_IDS = [6283690984]
 INITIAL_ANKETNIK_USER_IDS = [6283690984]
 
