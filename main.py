@@ -2606,84 +2606,199 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
     should_log = update.effective_chat.id in LOGGING_CHAT_IDS
 
     is_post = False
-
     hashtag = None
-    if message_text:
-        words = message_text.split()
+
+    # ФУНКЦИИ ДЛЯ ПРОВЕРКИ ПОСТОВ
+
+    def has_too_many_emojis(text: str) -> bool:
+        """Проверка на слишком много смайликов (более 45)"""
+        emoji_matches = EMOJI_PATTERN.findall(text)
+        return len(emoji_matches) > 45
+
+    def starts_with_special_chars(text: str) -> bool:
+        """Проверка начинается ли сообщение с специальных символов /, \, |"""
+        lines = text.strip().split('\n')
+        if not lines:
+            return False
+        
+        first_line = lines[0].strip()
+        # Проверяем первый символ каждой строки
+        for line in lines[:3]:  # Первые 3 строки
+            line = line.strip()
+            if line and line[0] in ['/', '\\', '|']:
+                return True
+        
+        # Проверяем последние 3 строки
+        for line in lines[-3:]:
+            line = line.strip()
+            if line and line[0] in ['/', '\\', '|']:
+                return True
+        
+        return False
+
+    def extract_hashtag_from_text(text: str) -> Optional[str]:
+        """Извлекает хэштег из текста (первые 3 или последние 3 строки)"""
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        
+        # Проверяем первые 3 строки
+        for line in lines[:3]:
+            words = line.split()
+            for word in words:
+                if word.startswith('#'):
+                    hashtag = word[1:].strip()
+                    if hashtag:
+                        return hashtag
+        
+        # Проверяем последние 3 строки
+        for line in lines[-3:]:
+            words = line.split()
+            for word in words:
+                if word.startswith('#'):
+                    hashtag = word[1:].strip()
+                    if hashtag:
+                        return hashtag
+        
+        # Если не нашли в первых/последних строках, ищем в целом тексте
+        words = text.split()
         for word in words:
             if word.startswith('#'):
-                hashtag = word[1:]
-                break
+                hashtag = word[1:].strip()
+                if hashtag:
+                    return hashtag
+        
+        return None
 
-    if hashtag:
-        post_text = message_text.strip()
+    def is_valid_role_hashtag(user_hashtag: str, text_hashtag: str) -> bool:
+        """Проверяет, соответствует ли хэштег в тексте роли пользователя (регистронезависимо)"""
+        return user_hashtag.lower() == text_hashtag.lower()
 
-        has_hashtag = True
-        has_min_length = len(post_text) >= 3
-        has_no_special_chars = True
-
-        emoji_count = len(EMOJI_PATTERN.findall(post_text))
-        has_max_emoji = emoji_count < 100
-
-        has_media = (update.effective_message.photo is not None or 
-                    update.effective_message.video is not None or
-                    update.effective_message.animation is not None)
-
-        user_has_role = False
+    def user_has_role_with_hashtag(user_id: int, hashtag: str) -> bool:
+        """Проверяет, есть ли у пользователя роль с таким хэштегом (регистронезависимо)"""
         try:
+            user_roles = session.query(Role).filter(Role.user_id == user_id).all()
+            for role in user_roles:
+                if role.hashtag and is_valid_role_hashtag(role.hashtag, hashtag):
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Ошибка при проверке роли: {e}")
+            return False
+
+    def has_minimum_content(text: str) -> bool:
+        """Проверяет минимальное содержание поста (без учета хэштегов)"""
+        # Удаляем хэштеги для проверки содержания
+        lines = text.split('\n')
+        clean_lines = []
+        for line in lines:
+            # Удаляем слова, начинающиеся с #
+            words = [word for word in line.split() if not word.startswith('#')]
+            if words:
+                clean_lines.append(' '.join(words))
+        
+        clean_text = ' '.join(clean_lines)
+        
+        # Проверяем длину без учета смайликов
+        text_without_emojis = EMOJI_PATTERN.sub('', clean_text)
+        return len(text_without_emojis.strip()) >= 3
+
+    # ОСНОВНАЯ ЛОГИКА ПРОВЕРКИ ПОСТА
+
+    # Извлекаем хэштег из сообщения
+    hashtag = extract_hashtag_from_text(message_text)
+    
+    if hashtag:
+        # 1. Проверяем, есть ли у пользователя такая роль (регистронезависимо)
+        user_has_role = user_has_role_with_hashtag(user_db.id, hashtag)
+        
+        if user_has_role:
+            # 2. Проверяем на специальные символы в начале/конце
+            if starts_with_special_chars(message_text):
+                logger.info(f"❌ Пост отклонен: начинается со спецсимволов /, \\, |")
+                is_post = False
+            # 3. Проверяем на слишком много смайликов
+            elif has_too_many_emojis(message_text):
+                logger.info(f"❌ Пост отклонен: более 45 смайликов")
+                is_post = False
+            # 4. Проверяем минимальное содержание
+            elif not has_minimum_content(message_text):
+                logger.info(f"❌ Пост отклонен: недостаточно содержания")
+                is_post = False
+            # 5. Проверяем наличие медиа (фото, видео и т.д.)
+            elif (update.effective_message.photo is not None or 
+                  update.effective_message.video is not None or
+                  update.effective_message.animation is not None):
+                # Пост с медиа - сразу одобряем (если есть правильный хэштег)
+                is_post = True
+                logger.info(f"✅ Пост принят: медиа с хэштегом #{hashtag}")
+            # 6. Если нет медиа, проверяем текст
+            else:
+                post_text = message_text.strip()
+                # Текстовый пост должен соответствовать всем критериям
+                if has_minimum_content(post_text):
+                    is_post = True
+                    logger.info(f"✅ Пост принят: текст с хэштегом #{hashtag}")
+                else:
+                    is_post = False
+                    logger.info(f"❌ Пост отклонен: недостаточно текста")
+        else:
+            # У пользователя нет такой роли
+            logger.info(f"❌ Пост отклонен: хэштег #{hashtag} не соответствует ролям пользователя")
+            is_post = False
+    else:
+        # Нет хэштега
+        is_post = False
+
+    # ОБРАБОТКА ПОСТА (если прошел все проверки)
+    if is_post:
+        try:
+            new_post = Post(
+                user=user_db,
+                content=message_text,
+                hashtag=hashtag,
+                message_id=update.effective_message.message_id,
+                chat_id=update.effective_chat.id
+            )
+            session.add(new_post)
+
+            stats.post_count += 1
+
+            # Обновляем активность роли
             user_role = session.query(Role).filter(
                 Role.user_id == user_db.id,
                 func.lower(Role.hashtag) == func.lower(hashtag)
             ).first()
-            user_has_role = user_role is not None
-        except Exception as e:
-            logger.error(f"Ошибка при проверке роли: {e}")
-            user_has_role = False
+            
+            if user_role:
+                user_role.last_active = datetime.date.today()
+                user_role.last_warning_sent = None
+                logger.info(f"✅ Активность роли '{user_role.name}' (#{hashtag}) обновлена")
 
-        if user_has_role and (has_media or (has_hashtag and has_min_length and has_max_emoji and has_no_special_chars)):
-            try:
-                new_post = Post(
-                    user=user_db,
-                    content=post_text,
-                    hashtag=hashtag,
-                    message_id=update.effective_message.message_id,
-                    chat_id=update.effective_chat.id
+            if should_log and logging_active:
+                log_entry = (
+                    f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                    f"[POST] Chat ID: {update.effective_chat.id}, "
+                    f"User ID: {user_tg.id}, "
+                    f"Username: @{user_tg.username or user_tg.id}, "
+                    f"Hashtag: #{hashtag}, "
+                    f"Message: {message_text[:100]}\n"
                 )
-                session.add(new_post)
-
-                stats.post_count += 1
-
-                if user_role:
-                    user_role.last_active = datetime.date.today()
-                    user_role.last_warning_sent = None
-                    logger.debug(f"Активность роли '{user_role.name}' обновлена для пользователя {user_db.username}")
-
-                is_post = True
-
-                if should_log and logging_active:
-                    log_entry = (
-                        f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                        f"[POST] Chat ID: {update.effective_chat.id}, "
-                        f"User ID: {user_tg.id}, "
-                        f"Username: @{user_tg.username or user_tg.id}, "
-                        f"Hashtag: #{hashtag}, "
-                        f"Message: {post_text[:100]}\n"
-                    )
-                    with open("log.txt", "a", encoding="utf-8") as f:
-                        f.write(log_entry)
-            except Exception as e:
-                logger.error(f"Ошибка при сохранении поста: {e}")
-
-    if should_log and logging_active and not is_post and message_text:
-        log_entry = (
-            f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-            f"Chat ID: {update.effective_chat.id}, "
-            f"User ID: {user_tg.id}, "
-            f"Username: @{user_tg.username or user_tg.id}, "
-            f"Message: {message_text[:100] or 'FILE/PHOTO'}\n"
-        )
-        with open("log.txt", "a", encoding="utf-8") as f:
-            f.write(log_entry)
+                with open("log.txt", "a", encoding="utf-8") as f:
+                    f.write(log_entry)
+                    
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении поста: {e}")
+    else:
+        # Логирование обычного сообщения (не пост)
+        if should_log and logging_active and message_text:
+            log_entry = (
+                f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                f"Chat ID: {update.effective_chat.id}, "
+                f"User ID: {user_tg.id}, "
+                f"Username: @{user_tg.username or user_tg.id}, "
+                f"Message: {message_text[:100] or 'FILE/PHOTO'}\n"
+            )
+            with open("log.txt", "a", encoding="utf-8") as f:
+                f.write(log_entry)
 
     session.commit()
 
