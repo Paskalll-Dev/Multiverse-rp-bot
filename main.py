@@ -279,7 +279,7 @@ class AnketaRequest(Base):
     __tablename__ = "anketa_requests"
     id = Column(BigInteger, primary_key=True, index=True)
     user_id = Column(BigInteger, ForeignKey("users.id"))
-    anketa_content = Column(StringList)
+    anketa_content = Column(Text)  # Изменили на Text
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.datetime.now)
     admin_message_id = Column(BigInteger, nullable=True)
@@ -1774,11 +1774,11 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return ConversationHandler.END
 
     # Сохраняем как JSON строку
-    anketa_json = json.dumps(anketa_content_list, ensure_ascii=False)
+    anketa_json = json.dumps(anketa_content_list, ensure_ascii=False, indent=2)
     
     new_anketa = AnketaRequest(
         user=user_db,
-        anketa_content=anketa_json,  # Сохраняем как JSON строку
+        anketa_content=anketa_json,
         status="pending"
     )
     session.add(new_anketa)
@@ -2016,7 +2016,14 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
     admin_username = query.from_user.username or query.from_user.id
 
     # Получаем контент анкеты
-    anketa_content = anketa.anketa_content
+    anketa_content_json = anketa.anketa_content
+    try:
+        anketa_content = json.loads(anketa_content_json)
+    except json.JSONDecodeError:
+        anketa_content = []
+    except Exception as e:
+        logger.error(f"Ошибка при парсинге контента анкеты: {e}")
+        anketa_content = []
     
     if action == "approve":
         anketa.status = "approved"
@@ -2037,24 +2044,9 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                 text=f"Новая анкета от @{user.username or user.id}!"
             )
 
-            # Парсим контент анкеты
-            processed_items = []
-            
-            try:
-                if isinstance(anketa_content, str):
-                    # Пытаемся загрузить как JSON
-                    processed_items = json.loads(anketa_content)
-                elif isinstance(anketa_content, list):
-                    processed_items = anketa_content
-                else:
-                    processed_items = []
-            except Exception as e:
-                logger.error(f"Ошибка при парсинге контента анкеты: {e}")
-                processed_items = []
-
-            # Отправляем контент в канал
-            if processed_items:
-                for item in processed_items:
+            # Отправляем контент анкеты
+            if isinstance(anketa_content, list):
+                for item in anketa_content:
                     try:
                         if isinstance(item, dict):
                             item_type = item.get('type', '')
@@ -2099,6 +2091,18 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                     except TelegramError as e:
                         logger.error(f"Не удалось отправить часть анкеты в канал: {e}")
                         continue
+            else:
+                # Если не список, отправляем как есть
+                try:
+                    content_str = str(anketa_content)
+                    if content_str and content_str.strip() and content_str != "[]":
+                        await send_to_channel_with_retry(
+                            context=context,
+                            chat_id=ANKET_CHANNEL_ID,
+                            text=content_str[:4000]
+                        )
+                except TelegramError as e:
+                    logger.error(f"Не удалось отправить анкету как текст: {e}")
 
             await send_to_channel_with_retry(
                 context=context,
