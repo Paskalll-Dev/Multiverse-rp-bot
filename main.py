@@ -164,6 +164,7 @@ class User(Base):
     is_banned = Column(Boolean, default=False)
     nagrads_enabled = Column(Boolean, default=True)
     show_nagrads_in_profile = Column(Boolean, default=True)
+    is_longposter = Column(Boolean, default=False)  # Новое поле для длиннострочника
 
     roles = relationship("Role", back_populates="user", cascade="all, delete-orphan")
     created_checks = relationship("Check", back_populates="creator", cascade="all, delete-orphan")
@@ -187,6 +188,7 @@ class Role(Base):
     hashtag = Column(String, index=True)
     last_active = Column(Date, default=datetime.date.today)
     last_warning_sent = Column(Date, nullable=True)
+    is_longposter_exempt = Column(Boolean, default=False)  # Новое поле для освобождения от неактива
 
     user = relationship("User", back_populates="roles")
 
@@ -279,7 +281,7 @@ class AnketaRequest(Base):
     __tablename__ = "anketa_requests"
     id = Column(BigInteger, primary_key=True, index=True)
     user_id = Column(BigInteger, ForeignKey("users.id"))
-    anketa_content = Column(Text)  # Изменили на Text
+    anketa_content = Column(Text)
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.datetime.now)
     admin_message_id = Column(BigInteger, nullable=True)
@@ -433,17 +435,41 @@ def create_tables():
                         session.execute(text("ALTER TABLE users ADD COLUMN is_anketnik BOOLEAN DEFAULT FALSE"))
                         logger.info("Добавлена колонка is_anketnik в таблицу users.")
 
+                # Добавляем новые колонки
+                result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='is_longposter'"))
+                if not result.fetchone():
+                    session.execute(text("ALTER TABLE users ADD COLUMN is_longposter BOOLEAN DEFAULT FALSE"))
+                    logger.info("Добавлена колонка is_longposter в таблицу users.")
+
+                result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='roles' AND column_name='is_longposter_exempt'"))
+                if not result.fetchone():
+                    session.execute(text("ALTER TABLE roles ADD COLUMN is_longposter_exempt BOOLEAN DEFAULT FALSE"))
+                    logger.info("Добавлена колонка is_longposter_exempt в таблицу roles.")
+
                 session.commit()
 
             except Exception as e:
                 logger.error(f"Ошибка при проверке/добавлении колонок в PostgreSQL: {e}")
                 session.rollback()
         else:
+            # SQLite
             result = session.execute(text("PRAGMA table_info(message_stats)"))
             columns = [row[1] for row in result]
             if 'post_count' not in columns:
                 session.execute(text("ALTER TABLE message_stats ADD COLUMN post_count INTEGER DEFAULT 0"))
                 logger.info("Добавлена колонка post_count в таблицу message_stats.")
+
+            result = session.execute(text("PRAGMA table_info(users)"))
+            columns = [row[1] for row in result]
+            if 'is_longposter' not in columns:
+                session.execute(text("ALTER TABLE users ADD COLUMN is_longposter BOOLEAN DEFAULT FALSE"))
+                logger.info("Добавлена колонка is_longposter в таблицу users.")
+
+            result = session.execute(text("PRAGMA table_info(roles)"))
+            columns = [row[1] for row in result]
+            if 'is_longposter_exempt' not in columns:
+                session.execute(text("ALTER TABLE roles ADD COLUMN is_longposter_exempt BOOLEAN DEFAULT FALSE"))
+                logger.info("Добавлена колонка is_longposter_exempt в таблицу roles.")
 
         session.commit()
     except Exception as e:
@@ -623,6 +649,301 @@ def load_info_posts():
 def save_info_posts(posts):
     with open(INFO_POSTS_FILE, "w", encoding="utf-8") as f:
         json.dump(posts, f, ensure_ascii=False, indent=4)
+
+# СЕКРЕТНЫЕ КОМАНДЫ РАЗРАБОТЧИКА
+
+@db_session
+@developer_only
+async def free_post(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+    """Освобождает пользователя от счетчика неактивности"""
+    if len(context.args) < 1:
+        await update.message.reply_text("Использование: /FreePost [username/ID]")
+        return
+    
+    target_identifier = context.args[0]
+    user_db = get_user_by_identifier_db(session, target_identifier)
+    
+    if not user_db:
+        await update.message.reply_text(f"Пользователь '{target_identifier}' не найден.")
+        return
+    
+    # Устанавливаем статус длиннострочника
+    user_db.is_longposter = True
+    
+    # Для всех ролей пользователя устанавливаем освобождение от неактива
+    roles = session.query(Role).filter(Role.user_id == user_db.id).all()
+    for role in roles:
+        role.is_longposter_exempt = True
+        role.last_warning_sent = None  # Сбрасываем предупреждения
+    
+    await update.message.reply_text(
+        f"Пользователь @{user_db.username or user_db.id} теперь длиннострочник.\n"
+        f"Правило неактива не действует на {len(roles)} ролей пользователя."
+    )
+    
+    # Уведомление пользователю
+    try:
+        await context.bot.send_message(
+            chat_id=user_db.id,
+            text="Вам присвоен статус 'Длиннострочник'. Правило неактива (10 дней) на вас больше не действует."
+        )
+    except TelegramError as e:
+        logger.warning(f"Не удалось уведомить пользователя {user_db.id}: {e}")
+
+@db_session
+@developer_only
+async def cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+    """Отменяет статус длиннострочника и запускает счет неактива"""
+    if len(context.args) < 1:
+        await update.message.reply_text("Использование: /CancelPost [username/ID]")
+        return
+    
+    target_identifier = context.args[0]
+    user_db = get_user_by_identifier_db(session, target_identifier)
+    
+    if not user_db:
+        await update.message.reply_text(f"Пользователь '{target_identifier}' не найден.")
+        return
+    
+    if not user_db.is_longposter:
+        await update.message.reply_text(f"Пользователь @{user_db.username or user_db.id} не является длиннострочником.")
+        return
+    
+    # Снимаем статус длиннострочника
+    user_db.is_longposter = False
+    
+    # Для всех ролей пользователя снимаем освобождение от неактива
+    roles = session.query(Role).filter(Role.user_id == user_db.id).all()
+    for role in roles:
+        role.is_longposter_exempt = False
+        # Обновляем дату последней активности на сегодня для начала отсчета
+        role.last_active = datetime.date.today()
+    
+    await update.message.reply_text(
+        f"Пользователь @{user_db.username or user_db.id} больше не длиннострочник.\n"
+        f"Счет неактива запущен для {len(roles)} ролей пользователя."
+    )
+    
+    # Уведомление пользователю
+    try:
+        await context.bot.send_message(
+            chat_id=user_db.id,
+            text="Ваш статус 'Длиннострочник' снят. Теперь на вас действует правило неактива (10 дней)."
+        )
+    except TelegramError as e:
+        logger.warning(f"Не удалось уведомить пользователя {user_db.id}: {e}")
+
+@db_session
+@developer_only
+async def check_dli(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+    """Показывает всех пользователей-длиннострочников и их роли"""
+    longposters = session.query(User).filter(User.is_longposter == True).all()
+    
+    if not longposters:
+        await update.message.reply_text("Длиннострочников не найдено.")
+        return
+    
+    response = "Список длиннострочников:\n\n"
+    
+    for i, user in enumerate(longposters, 1):
+        roles = session.query(Role).filter(Role.user_id == user.id).all()
+        
+        response += f"{i}. @{user.username or user.id} (ID: {user.id})\n"
+        response += f"   Роли ({len(roles)}):\n"
+        
+        for role in roles:
+            days_inactive = (datetime.date.today() - role.last_active).days
+            response += f"   - {role.name} (#{role.hashtag}) - неактив: {days_inactive} дней\n"
+        
+        response += "\n"
+    
+    # Если сообщение слишком длинное, разбиваем на части
+    if len(response) > 4000:
+        parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
+        for part in parts:
+            await update.message.reply_text(part)
+    else:
+        await update.message.reply_text(response)
+
+@db_session
+@developer_only
+async def check_roles_all(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+    """Показывает всех пользователей бота и их занятые роли"""
+    # Получаем всех пользователей с ролями
+    users_with_roles = session.query(User).join(Role).filter(Role.user_id == User.id).distinct().all()
+    
+    if not users_with_roles:
+        await update.message.reply_text("Пользователей с ролями не найдено.")
+        return
+    
+    response = "Список всех пользователей и их ролей:\n\n"
+    
+    for i, user in enumerate(users_with_roles, 1):
+        roles = session.query(Role).filter(Role.user_id == user.id).all()
+        
+        response += f"{i}. @{user.username or user.id} (ID: {user.id})\n"
+        response += f"   Всего ролей: {len(roles)}\n"
+        
+        for role in roles:
+            days_inactive = (datetime.date.today() - role.last_active).days
+            status = "Длиннострочник" if role.is_longposter_exempt else f"{days_inactive} дней"
+            response += f"   - {role.name} (#{role.hashtag}) - неактив: {status}\n"
+        
+        response += "\n"
+    
+    # Если сообщение слишком длинное, разбиваем на части
+    if len(response) > 4000:
+        parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
+        for part in parts:
+            await update.message.reply_text(part)
+    else:
+        await update.message.reply_text(response)
+
+@db_session
+@developer_only
+async def secret_help(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+    """Справка по секретным командам разработчика"""
+    help_text = """Секретные команды разработчика:
+
+/FreePost [username/ID] - Освобождает пользователя от счетчика неактивности. Статус: "Длиннострочник, Правило неактива не действует"
+
+/CancelPost [username/ID] - Отменяет статус длиннострочника и запускает счет неактива
+
+/CheckDLI - Показывает всех пользователей-длиннострочников и их роли (пронумерованный список)
+
+/CheckRoles - Показывает всех пользователей бота и их занятые роли, хэштеги и статус неактива
+
+/secretHelp - Эта справка
+
+Примечание: Все команды работают только для разработчиков."""
+    
+    await update.message.reply_text(help_text)
+
+async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE) -> None:
+    session = get_session_for_job()
+    try:
+        today = datetime.date.today()
+
+        warning_threshold = today - datetime.timedelta(days=7)
+        removal_threshold = today - datetime.timedelta(days=10)
+
+        # Роли для предупреждения (исключая длиннострочников)
+        roles_to_warn = session.query(Role).filter(
+            Role.last_active < warning_threshold,
+            Role.last_active >= removal_threshold,
+            or_(Role.last_warning_sent.is_(None), Role.last_warning_sent < warning_threshold),
+            Role.is_longposter_exempt == False  # Не предупреждаем длиннострочников
+        ).all()
+
+        for role in roles_to_warn:
+            user = session.query(User).filter(User.id == role.user_id).first()
+            if user:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user.id,
+                        text=f"Внимание! Ваша роль '{role.name}' (хэштег #{role.hashtag}) неактивна более 7 дней. "
+                             f"Если вы не сделаете пост с этим хэштегом в течение 3 дней, роль будет автоматически удалена."
+                    )
+                    role.last_warning_sent = today
+                    logger.info(f"Отправлено предупреждение пользователю {user.id} о неактивной роли {role.name}")
+                    
+                    # Уведомление разработчику
+                    for dev_id in DEVELOPER_IDS:
+                        try:
+                            await context.bot.send_message(
+                                chat_id=dev_id,
+                                text=f"Пользователь @{user.username or user.id} предупрежден об неактиве на роли '{role.name}' (#{role.hashtag})"
+                            )
+                        except TelegramError as e:
+                            logger.warning(f"Не удалось уведомить разработчика {dev_id}: {e}")
+                except TelegramError as e:
+                    logger.warning(f"Не удалось отправить предупреждение пользователю {user.id}: {e}")
+
+        # Роли для удаления (исключая длиннострочников)
+        roles_to_remove = session.query(Role).filter(
+            Role.last_active < removal_threshold,
+            Role.is_longposter_exempt == False  # Не удаляем роли длиннострочников
+        ).all()
+
+        for role in roles_to_remove:
+            user = session.query(User).filter(User.id == role.user_id).first()
+            role_name = role.name
+            hashtag = role.hashtag
+
+            session.delete(role)
+
+            if user:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user.id,
+                        text=f"Ваша роль '{role_name}' (хэштег #{hashtag}) была удалена за неактивность более 10 дней."
+                    )
+                    logger.info(f"Удалена роль '{role_name}' у пользователя {user.id} за неактивность")
+                except TelegramError as e:
+                    logger.warning(f"Не удалось уведомить пользователя {user.id} об удалении роли: {e}")
+            
+            # Уведомление разработчику об удалении роли
+            for dev_id in DEVELOPER_IDS:
+                try:
+                    await context.bot.send_message(
+                        chat_id=dev_id,
+                        text=f"У пользователя @{user.username or user.id} удалена роль '{role_name}' (#{hashtag})\nПричина: неактив 10 дней"
+                    )
+                except TelegramError as e:
+                    logger.warning(f"Не удалось уведомить разработчика {dev_id}: {e}")
+
+        session.commit()
+
+    except Exception as e:
+        logger.error(f"Ошибка при выполнении задачи check_inactive_roles_with_warnings: {e}", exc_info=True)
+    finally:
+        session.close()
+
+@db_session
+@not_banned
+async def check_role(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
+    if len(context.args) < 1:
+        await update.message.reply_text("Использование: /CheckRole [название роли/хэштег]")
+        return
+
+    role_identifier = " ".join(context.args).strip().lstrip('#')
+
+    role = session.query(Role).filter(
+        or_(func.lower(Role.hashtag) == role_identifier.lower(), Role.name.ilike(f"%{role_identifier}%"))
+    ).first()
+
+    if not role:
+        await update.message.reply_text(f"Роль '{role_identifier}' не найдена.")
+        return
+
+    owner = session.query(User).filter(User.id == role.user_id).first()
+    if not owner:
+        await update.message.reply_text("Ошибка: владелец роли не найден.")
+        return
+
+    today = datetime.date.today()
+    days_inactive = (today - role.last_active).days
+
+    # Проверяем, является ли пользователь длиннострочником
+    if role.is_longposter_exempt:
+        response = f"Роль занята!\n"
+        response += f"Владелец Роли: @{owner.username or owner.id}\n"
+        response += f"Название роли: {role.name}\n"
+        response += f"Хэштег: #{role.hashtag}\n"
+        response += f"Взял Роль: {role.last_active.strftime('%d.%m.%Y')}\n"
+        response += f"Статус: Длиннострочник, Правило неактива не действует"
+    else:
+        response = f"Роль занята!\n"
+        response += f"Владелец Роли: @{owner.username or owner.id}\n"
+        response += f"Название роли: {role.name}\n"
+        response += f"Хэштег: #{role.hashtag}\n"
+        response += f"Взял Роль: {role.last_active.strftime('%d.%m.%Y')}\n"
+        response += f"Неактив на Роли: {days_inactive} дней"
+
+    await update.message.reply_text(response)
+
+# Остальной код остается без изменений...
+# [Здесь должен быть весь остальной код из вашего файла, начиная с функции info_command]
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.callback_query:
@@ -1033,6 +1354,8 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -
         admin_roles.append("Анкетник")
     if user_db.is_moderator:
         admin_roles.append("Модератор")
+    if user_db.is_longposter:
+        admin_roles.append("Длиннострочник")
 
     if admin_roles:
         profile_message += f"Административные роли: {', '.join(admin_roles)}\n"
@@ -1616,13 +1939,15 @@ async def reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     user_db.op_balance = 0
 
     user_db.status_rp = "Участник"
+    user_db.is_longposter = False  # Сбрасываем статус длиннострочника
 
     try:
         await update.message.reply_text(
             f"Пользователь @{user_db.username or user_db.id} сброшен!\n"
             f"Удалено наград: {nagrad_count}\n"
             f"Обнулены балансы: ОН {old_on}→0, ОП {old_op}→0\n"
-            f"Статус РП сброшен до: Участник"
+            f"Статус РП сброшен до: Участник\n"
+            f"Статус длиннострочника сброшен"
         )
     except TimedOut:
         logger.warning(f"Timeout при отправке сообщения в reset_user, но операция выполнена")
@@ -1630,7 +1955,7 @@ async def reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     try:
         await context.bot.send_message(
             chat_id=user_db.id,
-            text="Ваши данные были сброшены администратором. Все награды удалены, балансы обнулены."
+            text="Ваши данные были сброшены администратором. Все награды удалены, балансы обнулены, статус длиннострочника сброшен."
         )
     except TelegramError as e:
         logger.warning(f"Не удалось уведомить пользователя {user_db.id} о сбросе: {e}")
@@ -2197,40 +2522,6 @@ async def done_clarify_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 @db_session
-@not_banned
-async def check_role(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    if len(context.args) < 1:
-        await update.message.reply_text("Использование: /CheckRole [название роли/хэштег]")
-        return
-
-    role_identifier = " ".join(context.args).strip().lstrip('#')
-
-    role = session.query(Role).filter(
-        or_(func.lower(Role.hashtag) == role_identifier.lower(), Role.name.ilike(f"%{role_identifier}%"))
-    ).first()
-
-    if not role:
-        await update.message.reply_text(f"Роль '{role_identifier}' не найдена.")
-        return
-
-    owner = session.query(User).filter(User.id == role.user_id).first()
-    if not owner:
-        await update.message.reply_text("Ошибка: владелец роли не найден.")
-        return
-
-    today = datetime.date.today()
-    days_inactive = (today - role.last_active).days
-
-    response = f"Роль занята!\n"
-    response += f"Владелец Роли: @{owner.username or owner.id}\n"
-    response += f"Название роли: {role.name}\n"
-    response += f"Хэштег: #{role.hashtag}\n"
-    response += f"Взял Роль: {role.last_active.strftime('%d.%m.%Y')}\n"
-    response += f"Неактив на Роли: {days_inactive} дней"
-
-    await update.message.reply_text(response)
-
-@db_session
 @developer_only
 async def qyqyqys_on(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     if len(context.args) < 1:
@@ -2713,15 +3004,15 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
         if user_has_role:
             # 2. Проверяем на специальные символы в начале/конце
             if starts_with_special_chars(message_text):
-                logger.info(f"❌ Пост отклонен: начинается со спецсимволов /, \\, |")
+                logger.info(f"Пост отклонен: начинается со спецсимволов /, \\, |")
                 is_post = False
             # 3. Проверяем на слишком много смайликов
             elif has_too_many_emojis(message_text):
-                logger.info(f"❌ Пост отклонен: более 45 смайликов")
+                logger.info(f"Пост отклонен: более 45 смайликов")
                 is_post = False
             # 4. Проверяем минимальное содержание
             elif not has_minimum_content(message_text):
-                logger.info(f"❌ Пост отклонен: недостаточно содержания")
+                logger.info(f"Пост отклонен: недостаточно содержания")
                 is_post = False
             # 5. Проверяем наличие медиа (фото, видео и т.д.)
             elif (update.effective_message.photo is not None or 
@@ -2729,20 +3020,20 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                   update.effective_message.animation is not None):
                 # Пост с медиа - сразу одобряем (если есть правильный хэштег)
                 is_post = True
-                logger.info(f"✅ Пост принят: медиа с хэштегом #{hashtag}")
+                logger.info(f"Пост принят: медиа с хэштегом #{hashtag}")
             # 6. Если нет медиа, проверяем текст
             else:
                 post_text = message_text.strip()
                 # Текстовый пост должен соответствовать всем критериям
                 if has_minimum_content(post_text):
                     is_post = True
-                    logger.info(f"✅ Пост принят: текст с хэштегом #{hashtag}")
+                    logger.info(f"Пост принят: текст с хэштегом #{hashtag}")
                 else:
                     is_post = False
-                    logger.info(f"❌ Пост отклонен: недостаточно текста")
+                    logger.info(f"Пост отклонен: недостаточно текста")
         else:
             # У пользователя нет такой роли
-            logger.info(f"❌ Пост отклонен: хэштег #{hashtag} не соответствует ролям пользователя")
+            logger.info(f"Пост отклонен: хэштег #{hashtag} не соответствует ролям пользователя")
             is_post = False
     else:
         # Нет хэштега
@@ -2771,7 +3062,7 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
             if user_role:
                 user_role.last_active = datetime.date.today()
                 user_role.last_warning_sent = None
-                logger.info(f"✅ Активность роли '{user_role.name}' (#{hashtag}) обновлена")
+                logger.info(f"Активность роли '{user_role.name}' (#{hashtag}) обновлена")
 
             if should_log and logging_active:
                 log_entry = (
@@ -2873,60 +3164,6 @@ async def check_post_stats(update: Update, context: ContextTypes.DEFAULT_TYPE, s
         response += "Последний пост: нет постов\n"
 
     await update.message.reply_text(response)
-
-async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE) -> None:
-    session = get_session_for_job()
-    try:
-        today = datetime.date.today()
-
-        warning_threshold = today - datetime.timedelta(days=7)
-        removal_threshold = today - datetime.timedelta(days=10)
-
-        roles_to_warn = session.query(Role).filter(
-            Role.last_active < warning_threshold,
-            Role.last_active >= removal_threshold,
-            or_(Role.last_warning_sent.is_(None), Role.last_warning_sent < warning_threshold)
-        ).all()
-
-        for role in roles_to_warn:
-            user = session.query(User).filter(User.id == role.user_id).first()
-            if user:
-                try:
-                    await context.bot.send_message(
-                        chat_id=user.id,
-                        text=f"Внимание! Ваша роль '{role.name}' (хэштег #{role.hashtag}) неактивна более 7 дней. "
-                             f"Если вы не сделаете пост с этим хэштегом в течение 3 дней, роль будет автоматически удалена."
-                    )
-                    role.last_warning_sent = today
-                    logger.info(f"Отправлено предупреждение пользователю {user.id} о неактивной роли {role.name}")
-                except TelegramError as e:
-                    logger.warning(f"Не удалось отправить предупреждение пользователю {user.id}: {e}")
-
-        roles_to_remove = session.query(Role).filter(Role.last_active < removal_threshold).all()
-
-        for role in roles_to_remove:
-            user = session.query(User).filter(User.id == role.user_id).first()
-            role_name = role.name
-            hashtag = role.hashtag
-
-            session.delete(role)
-
-            if user:
-                try:
-                    await context.bot.send_message(
-                        chat_id=user.id,
-                        text=f"Ваша роль '{role_name}' (хэштег #{hashtag}) была удалена за неактивность более 10 дней."
-                    )
-                    logger.info(f"Удалена роль '{role_name}' у пользователя {user.id} за неактивность")
-                except TelegramError as e:
-                    logger.warning(f"Не удалось уведомить пользователя {user.id} об удалении роли: {e}")
-
-        session.commit()
-
-    except Exception as e:
-        logger.error(f"Ошибка при выполнении задачи check_inactive_roles_with_warnings: {e}", exc_info=True)
-    finally:
-        session.close()
 
 @db_session
 @not_banned
@@ -4271,6 +4508,13 @@ def main() -> None:
     application.add_handler(CommandHandler("startfilter", start_filter, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("stopfilter", stop_filter, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("qyqyqs", qyqyqs, filters=allowed_chats_filter))
+
+    # Добавляем секретные команды разработчика
+    application.add_handler(CommandHandler("FreePost", free_post, filters=allowed_chats_filter))
+    application.add_handler(CommandHandler("CancelPost", cancel_post, filters=allowed_chats_filter))
+    application.add_handler(CommandHandler("CheckDLI", check_dli, filters=allowed_chats_filter))
+    application.add_handler(CommandHandler("CheckRoles", check_roles_all, filters=allowed_chats_filter))
+    application.add_handler(CommandHandler("secretHelp", secret_help, filters=allowed_chats_filter))
 
     application.add_handler(MessageHandler(
         filters.Regex(r"^/player_contact_(\d+)$") & allowed_chats_filter,
