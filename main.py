@@ -18,7 +18,7 @@ from sqlalchemy.types import TypeDecorator, CHAR
 from sqlalchemy import TypeDecorator, String as SQLA_String
 import uuid
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, User as TGUser, CallbackQuery, Message
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, User as TGUser, CallbackQuery, Message, InputMediaPhoto, InputMediaVideo, InputMediaDocument
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -164,7 +164,7 @@ class User(Base):
     is_banned = Column(Boolean, default=False)
     nagrads_enabled = Column(Boolean, default=True)
     show_nagrads_in_profile = Column(Boolean, default=True)
-    is_longposter = Column(Boolean, default=False)  # Новое поле для длиннострочника
+    is_longposter = Column(Boolean, default=False)
 
     roles = relationship("Role", back_populates="user", cascade="all, delete-orphan")
     created_checks = relationship("Check", back_populates="creator", cascade="all, delete-orphan")
@@ -188,7 +188,7 @@ class Role(Base):
     hashtag = Column(String, index=True)
     last_active = Column(Date, default=datetime.date.today)
     last_warning_sent = Column(Date, nullable=True)
-    is_longposter_exempt = Column(Boolean, default=False)  # Новое поле для освобождения от неактива
+    is_longposter_exempt = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="roles")
 
@@ -435,7 +435,6 @@ def create_tables():
                         session.execute(text("ALTER TABLE users ADD COLUMN is_anketnik BOOLEAN DEFAULT FALSE"))
                         logger.info("Добавлена колонка is_anketnik в таблицу users.")
 
-                # Добавляем новые колонки
                 result = session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='is_longposter'"))
                 if not result.fetchone():
                     session.execute(text("ALTER TABLE users ADD COLUMN is_longposter BOOLEAN DEFAULT FALSE"))
@@ -452,7 +451,6 @@ def create_tables():
                 logger.error(f"Ошибка при проверке/добавлении колонок в PostgreSQL: {e}")
                 session.rollback()
         else:
-            # SQLite
             result = session.execute(text("PRAGMA table_info(message_stats)"))
             columns = [row[1] for row in result]
             if 'post_count' not in columns:
@@ -650,12 +648,9 @@ def save_info_posts(posts):
     with open(INFO_POSTS_FILE, "w", encoding="utf-8") as f:
         json.dump(posts, f, ensure_ascii=False, indent=4)
 
-# СЕКРЕТНЫЕ КОМАНДЫ РАЗРАБОТЧИКА
-
 @db_session
 @developer_only
 async def free_post(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Освобождает пользователя от счетчика неактивности"""
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /FreePost [username/ID]")
         return
@@ -667,21 +662,18 @@ async def free_post(update: Update, context: ContextTypes.DEFAULT_TYPE, session)
         await update.message.reply_text(f"Пользователь '{target_identifier}' не найден.")
         return
     
-    # Устанавливаем статус длиннострочника
     user_db.is_longposter = True
     
-    # Для всех ролей пользователя устанавливаем освобождение от неактива
     roles = session.query(Role).filter(Role.user_id == user_db.id).all()
     for role in roles:
         role.is_longposter_exempt = True
-        role.last_warning_sent = None  # Сбрасываем предупреждения
+        role.last_warning_sent = None
     
     await update.message.reply_text(
         f"Пользователь @{user_db.username or user_db.id} теперь длиннострочник.\n"
         f"Правило неактива не действует на {len(roles)} ролей пользователя."
     )
     
-    # Уведомление пользователю
     try:
         await context.bot.send_message(
             chat_id=user_db.id,
@@ -693,7 +685,6 @@ async def free_post(update: Update, context: ContextTypes.DEFAULT_TYPE, session)
 @db_session
 @developer_only
 async def cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Отменяет статус длиннострочника и запускает счет неактива"""
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /CancelPost [username/ID]")
         return
@@ -709,14 +700,11 @@ async def cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
         await update.message.reply_text(f"Пользователь @{user_db.username or user_db.id} не является длиннострочником.")
         return
     
-    # Снимаем статус длиннострочника
     user_db.is_longposter = False
     
-    # Для всех ролей пользователя снимаем освобождение от неактива
     roles = session.query(Role).filter(Role.user_id == user_db.id).all()
     for role in roles:
         role.is_longposter_exempt = False
-        # Обновляем дату последней активности на сегодня для начала отсчета
         role.last_active = datetime.date.today()
     
     await update.message.reply_text(
@@ -724,7 +712,6 @@ async def cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
         f"Счет неактива запущен для {len(roles)} ролей пользователя."
     )
     
-    # Уведомление пользователю
     try:
         await context.bot.send_message(
             chat_id=user_db.id,
@@ -736,7 +723,6 @@ async def cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
 @db_session
 @developer_only
 async def check_dli(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Показывает всех пользователей-длиннострочников и их роли"""
     longposters = session.query(User).filter(User.is_longposter == True).all()
     
     if not longposters:
@@ -757,7 +743,6 @@ async def check_dli(update: Update, context: ContextTypes.DEFAULT_TYPE, session)
         
         response += "\n"
     
-    # Если сообщение слишком длинное, разбиваем на части
     if len(response) > 4000:
         parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
         for part in parts:
@@ -768,8 +753,6 @@ async def check_dli(update: Update, context: ContextTypes.DEFAULT_TYPE, session)
 @db_session
 @developer_only
 async def check_roles_all(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Показывает всех пользователей бота и их занятые роли"""
-    # Получаем всех пользователей с ролями
     users_with_roles = session.query(User).join(Role).filter(Role.user_id == User.id).distinct().all()
     
     if not users_with_roles:
@@ -791,7 +774,6 @@ async def check_roles_all(update: Update, context: ContextTypes.DEFAULT_TYPE, se
         
         response += "\n"
     
-    # Если сообщение слишком длинное, разбиваем на части
     if len(response) > 4000:
         parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
         for part in parts:
@@ -802,7 +784,6 @@ async def check_roles_all(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 @db_session
 @developer_only
 async def secret_help(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
-    """Справка по секретным командам разработчика"""
     help_text = """Секретные команды разработчика:
 
 /FreePost [username/ID] - Освобождает пользователя от счетчика неактивности. Статус: "Длиннострочник, Правило неактива не действует"
@@ -827,12 +808,11 @@ async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE)
         warning_threshold = today - datetime.timedelta(days=7)
         removal_threshold = today - datetime.timedelta(days=10)
 
-        # Роли для предупреждения (исключая длиннострочников)
         roles_to_warn = session.query(Role).filter(
             Role.last_active < warning_threshold,
             Role.last_active >= removal_threshold,
             or_(Role.last_warning_sent.is_(None), Role.last_warning_sent < warning_threshold),
-            Role.is_longposter_exempt == False  # Не предупреждаем длиннострочников
+            Role.is_longposter_exempt == False
         ).all()
 
         for role in roles_to_warn:
@@ -847,7 +827,6 @@ async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE)
                     role.last_warning_sent = today
                     logger.info(f"Отправлено предупреждение пользователю {user.id} о неактивной роли {role.name}")
                     
-                    # Уведомление разработчику
                     for dev_id in DEVELOPER_IDS:
                         try:
                             await context.bot.send_message(
@@ -859,10 +838,9 @@ async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE)
                 except TelegramError as e:
                     logger.warning(f"Не удалось отправить предупреждение пользователю {user.id}: {e}")
 
-        # Роли для удаления (исключая длиннострочников)
         roles_to_remove = session.query(Role).filter(
             Role.last_active < removal_threshold,
-            Role.is_longposter_exempt == False  # Не удаляем роли длиннострочников
+            Role.is_longposter_exempt == False
         ).all()
 
         for role in roles_to_remove:
@@ -882,7 +860,6 @@ async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE)
                 except TelegramError as e:
                     logger.warning(f"Не удалось уведомить пользователя {user.id} об удалении роли: {e}")
             
-            # Уведомление разработчику об удалении роли
             for dev_id in DEVELOPER_IDS:
                 try:
                     await context.bot.send_message(
@@ -924,7 +901,6 @@ async def check_role(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     today = datetime.date.today()
     days_inactive = (today - role.last_active).days
 
-    # Проверяем, является ли пользователь длиннострочником
     if role.is_longposter_exempt:
         response = f"Роль занята!\n"
         response += f"Владелец Роли: @{owner.username or owner.id}\n"
@@ -941,9 +917,6 @@ async def check_role(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         response += f"Неактив на Роли: {days_inactive} дней"
 
     await update.message.reply_text(response)
-
-# Остальной код остается без изменений...
-# [Здесь должен быть весь остальной код из вашего файла, начиная с функции info_command]
 
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.callback_query:
@@ -1939,7 +1912,7 @@ async def reset_user(update: Update, context: ContextTypes.DEFAULT_TYPE, session
     user_db.op_balance = 0
 
     user_db.status_rp = "Участник"
-    user_db.is_longposter = False  # Сбрасываем статус длиннострочника
+    user_db.is_longposter = False
 
     try:
         await update.message.reply_text(
@@ -2068,22 +2041,84 @@ async def send_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @db_session_for_conversation
 async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
+    # Проверяем, есть ли медиагруппа
+    if update.message.media_group_id:
+        # Это часть медиагруппы
+        media_group_id = update.message.media_group_id
+        context.user_data.setdefault('media_groups', {})
+        
+        # Инициализируем или получаем группу
+        if media_group_id not in context.user_data['media_groups']:
+            context.user_data['media_groups'][media_group_id] = {
+                'items': [],
+                'first_message_id': update.message.message_id
+            }
+        
+        # Добавляем медиа в группу
+        media_item = {}
+        if update.message.photo:
+            media_item = {
+                'type': 'photo',
+                'file_id': update.message.photo[-1].file_id,
+                'caption': update.message.caption or '',
+                'media_group_id': media_group_id
+            }
+        elif update.message.video:
+            media_item = {
+                'type': 'video', 
+                'file_id': update.message.video.file_id,
+                'caption': update.message.caption or '',
+                'media_group_id': media_group_id
+            }
+        elif update.message.document:
+            media_item = {
+                'type': 'document',
+                'file_id': update.message.document.file_id,
+                'caption': update.message.caption or '',
+                'media_group_id': media_group_id
+            }
+        
+        if media_item:
+            context.user_data['media_groups'][media_group_id]['items'].append(media_item)
+        
+        # Для первого сообщения в группе отвечаем пользователю
+        if len(context.user_data['media_groups'][media_group_id]['items']) == 1:
+            await update.message.reply_text("Медиагруппа добавлена в анкету. Продолжайте или напишите /done_anketa для завершения.")
+        return STATE_ANKETA_MESSAGE
+    
+    # Обычное сообщение (не медиагруппа)
     message_content = {}
 
     if update.message.text:
         message_content = {'type': 'text', 'content': update.message.text}
     elif update.message.photo:
-        message_content = {'type': 'photo', 'file_id': update.message.photo[-1].file_id, 'caption': update.message.caption or ''}
+        message_content = {
+            'type': 'photo', 
+            'file_id': update.message.photo[-1].file_id, 
+            'caption': update.message.caption or ''
+        }
     elif update.message.video:
-        message_content = {'type': 'video', 'file_id': update.message.video.file_id, 'caption': update.message.caption or ''}
+        message_content = {
+            'type': 'video', 
+            'file_id': update.message.video.file_id, 
+            'caption': update.message.caption or ''
+        }
     elif update.message.animation:
-        message_content = {'type': 'animation', 'file_id': update.message.animation.file_id, 'caption': update.message.caption or ''}
+        message_content = {
+            'type': 'animation', 
+            'file_id': update.message.animation.file_id, 
+            'caption': update.message.caption or ''
+        }
     elif update.message.document:
-        message_content = {'type': 'document', 'file_id': update.message.document.file_id, 'caption': update.message.caption or ''}
+        message_content = {
+            'type': 'document', 
+            'file_id': update.message.document.file_id, 
+            'caption': update.message.caption or ''
+        }
     else:
         await update.message.reply_text("Пожалуйста, отправляйте только текстовые сообщения, фото, видео, документы или гифки для анкеты.")
         return STATE_ANKETA_MESSAGE
-
+    
     context.user_data['anketa_buffer'].append(message_content)
     await update.message.reply_text("Сообщение/медиа добавлено в анкету. Продолжайте или напишите /done_anketa для завершения.")
     return STATE_ANKETA_MESSAGE
@@ -2094,6 +2129,18 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
     user_db = get_or_create_user(session, user_tg.id, user_tg.username)
 
     anketa_content_list = context.user_data.pop('anketa_buffer', [])
+    media_groups = context.user_data.pop('media_groups', {})
+    
+    # Добавляем медиагруппы в список контента
+    for media_group_id, group_data in media_groups.items():
+        if group_data['items']:
+            # Сохраняем медиагруппу как один элемент
+            anketa_content_list.append({
+                'type': 'media_group',
+                'items': group_data['items'],
+                'caption': group_data['items'][0].get('caption', '') if group_data['items'] else ''
+            })
+    
     if not anketa_content_list:
         await update.message.reply_text("Вы не отправили ни одного сообщения для анкеты. Запрос отменен.")
         return ConversationHandler.END
@@ -2145,6 +2192,37 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                 chat_id=anketnik.id,
                                 text=text_content
                             )
+                    elif item['type'] == 'media_group':
+                        # Отправляем медиагруппу
+                        media_items = item.get('items', [])
+                        if media_items:
+                            # Создаем список InputMedia
+                            media_list = []
+                            for i, media_item in enumerate(media_items):
+                                if media_item['type'] == 'photo':
+                                    media = InputMediaPhoto(
+                                        media=media_item['file_id'],
+                                        caption=media_item['caption'] if i == 0 else None
+                                    )
+                                elif media_item['type'] == 'video':
+                                    media = InputMediaVideo(
+                                        media=media_item['file_id'],
+                                        caption=media_item['caption'] if i == 0 else None
+                                    )
+                                elif media_item['type'] == 'document':
+                                    media = InputMediaDocument(
+                                        media=media_item['file_id'],
+                                        caption=media_item['caption'] if i == 0 else None
+                                    )
+                                else:
+                                    continue
+                                media_list.append(media)
+                            
+                            if media_list:
+                                await context.bot.send_media_group(
+                                    chat_id=anketnik.id,
+                                    media=media_list
+                                )
                     elif item['type'] == 'photo':
                         photo_id = item.get('file_id', '')
                         caption = item.get('caption', '')
@@ -2369,50 +2447,91 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                 text=f"Новая анкета от @{user.username or user.id}!"
             )
 
-            # Отправляем контент анкеты
+            # Отправляем контент анкеты В ТАКОМ ЖЕ ВИДЕ
             if isinstance(anketa_content, list):
                 for item in anketa_content:
                     try:
                         if isinstance(item, dict):
                             item_type = item.get('type', '')
-                            content = item.get('content', '')
-                            file_id = item.get('file_id', '')
-                            caption = item.get('caption', '')
-
-                            if item_type == 'text' and content and content.strip():
-                                await send_to_channel_with_retry(
-                                    context=context,
-                                    chat_id=ANKET_CHANNEL_ID,
-                                    text=content
-                                )
-                            elif item_type == 'photo' and file_id:
-                                await send_to_channel_with_retry(
-                                    context=context,
-                                    chat_id=ANKET_CHANNEL_ID,
-                                    photo=file_id,
-                                    caption=caption if caption and caption.strip() else None
-                                )
-                            elif item_type == 'video' and file_id:
-                                await send_to_channel_with_retry(
-                                    context=context,
-                                    chat_id=ANKET_CHANNEL_ID,
-                                    video=file_id,
-                                    caption=caption if caption and caption.strip() else None
-                                )
-                            elif item_type == 'animation' and file_id:
-                                await send_to_channel_with_retry(
-                                    context=context,
-                                    chat_id=ANKET_CHANNEL_ID,
-                                    animation=file_id,
-                                    caption=caption if caption and caption.strip() else None
-                                )
-                            elif item_type == 'document' and file_id:
-                                await send_to_channel_with_retry(
-                                    context=context,
-                                    chat_id=ANKET_CHANNEL_ID,
-                                    document=file_id,
-                                    caption=caption if caption and caption.strip() else None
-                                )
+                            
+                            if item_type == 'text':
+                                content = item.get('content', '')
+                                if content and content.strip():
+                                    await send_to_channel_with_retry(
+                                        context=context,
+                                        chat_id=ANKET_CHANNEL_ID,
+                                        text=content
+                                    )
+                            elif item_type == 'media_group':
+                                # Отправляем медиагруппу в канал
+                                media_items = item.get('items', [])
+                                if media_items:
+                                    media_list = []
+                                    for i, media_item in enumerate(media_items):
+                                        if media_item['type'] == 'photo':
+                                            media = InputMediaPhoto(
+                                                media=media_item['file_id'],
+                                                caption=media_item.get('caption', '') if i == 0 else None
+                                            )
+                                        elif media_item['type'] == 'video':
+                                            media = InputMediaVideo(
+                                                media=media_item['file_id'],
+                                                caption=media_item.get('caption', '') if i == 0 else None
+                                            )
+                                        elif media_item['type'] == 'document':
+                                            media = InputMediaDocument(
+                                                media=media_item['file_id'],
+                                                caption=media_item.get('caption', '') if i == 0 else None
+                                            )
+                                        else:
+                                            continue
+                                        media_list.append(media)
+                                    
+                                    if media_list:
+                                        await context.bot.send_media_group(
+                                            chat_id=ANKET_CHANNEL_ID,
+                                            media=media_list
+                                        )
+                            elif item_type == 'photo':
+                                photo_id = item.get('file_id', '')
+                                caption = item.get('caption', '')
+                                if photo_id:
+                                    await send_to_channel_with_retry(
+                                        context=context,
+                                        chat_id=ANKET_CHANNEL_ID,
+                                        photo=photo_id,
+                                        caption=caption if caption and caption.strip() else None
+                                    )
+                            elif item_type == 'video':
+                                video_id = item.get('file_id', '')
+                                caption = item.get('caption', '')
+                                if video_id:
+                                    await send_to_channel_with_retry(
+                                        context=context,
+                                        chat_id=ANKET_CHANNEL_ID,
+                                        video=video_id,
+                                        caption=caption if caption and caption.strip() else None
+                                    )
+                            elif item_type == 'animation':
+                                animation_id = item.get('file_id', '')
+                                caption = item.get('caption', '')
+                                if animation_id:
+                                    await send_to_channel_with_retry(
+                                        context=context,
+                                        chat_id=ANKET_CHANNEL_ID,
+                                        animation=animation_id,
+                                        caption=caption if caption and caption.strip() else None
+                                    )
+                            elif item_type == 'document':
+                                document_id = item.get('file_id', '')
+                                caption = item.get('caption', '')
+                                if document_id:
+                                    await send_to_channel_with_retry(
+                                        context=context,
+                                        chat_id=ANKET_CHANNEL_ID,
+                                        document=document_id,
+                                        caption=caption if caption and caption.strip() else None
+                                    )
                     except TelegramError as e:
                         logger.error(f"Не удалось отправить часть анкеты в канал: {e}")
                         continue
@@ -2899,27 +3018,21 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
     is_post = False
     hashtag = None
 
-    # ФУНКЦИИ ДЛЯ ПРОВЕРКИ ПОСТОВ
-
     def has_too_many_emojis(text: str) -> bool:
-        """Проверка на слишком много смайликов (более 45)"""
         emoji_matches = EMOJI_PATTERN.findall(text)
         return len(emoji_matches) > 45
 
     def starts_with_special_chars(text: str) -> bool:
-        """Проверка начинается ли сообщение с специальных символов /, \, |"""
         lines = text.strip().split('\n')
         if not lines:
             return False
         
         first_line = lines[0].strip()
-        # Проверяем первый символ каждой строки
-        for line in lines[:3]:  # Первые 3 строки
+        for line in lines[:3]:
             line = line.strip()
             if line and line[0] in ['/', '\\', '|']:
                 return True
         
-        # Проверяем последние 3 строки
         for line in lines[-3:]:
             line = line.strip()
             if line and line[0] in ['/', '\\', '|']:
@@ -2928,10 +3041,8 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
         return False
 
     def extract_hashtag_from_text(text: str) -> Optional[str]:
-        """Извлекает хэштег из текста (первые 3 или последние 3 строки)"""
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         
-        # Проверяем первые 3 строки
         for line in lines[:3]:
             words = line.split()
             for word in words:
@@ -2940,7 +3051,6 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                     if hashtag:
                         return hashtag
         
-        # Проверяем последние 3 строки
         for line in lines[-3:]:
             words = line.split()
             for word in words:
@@ -2949,7 +3059,6 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                     if hashtag:
                         return hashtag
         
-        # Если не нашли в первых/последних строках, ищем в целом тексте
         words = text.split()
         for word in words:
             if word.startswith('#'):
@@ -2960,11 +3069,9 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
         return None
 
     def is_valid_role_hashtag(user_hashtag: str, text_hashtag: str) -> bool:
-        """Проверяет, соответствует ли хэштег в тексте роли пользователя (регистронезависимо)"""
         return user_hashtag.lower() == text_hashtag.lower()
 
     def user_has_role_with_hashtag(user_id: int, hashtag: str) -> bool:
-        """Проверяет, есть ли у пользователя роль с таким хэштегом (регистронезависимо)"""
         try:
             user_roles = session.query(Role).filter(Role.user_id == user_id).all()
             for role in user_roles:
@@ -2976,55 +3083,40 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
             return False
 
     def has_minimum_content(text: str) -> bool:
-        """Проверяет минимальное содержание поста (без учета хэштегов)"""
-        # Удаляем хэштеги для проверки содержания
         lines = text.split('\n')
         clean_lines = []
         for line in lines:
-            # Удаляем слова, начинающиеся с #
             words = [word for word in line.split() if not word.startswith('#')]
             if words:
                 clean_lines.append(' '.join(words))
         
         clean_text = ' '.join(clean_lines)
-        
-        # Проверяем длину без учета смайликов
         text_without_emojis = EMOJI_PATTERN.sub('', clean_text)
         return len(text_without_emojis.strip()) >= 3
-
-    # ОСНОВНАЯ ЛОГИКА ПРОВЕРКИ ПОСТА
 
     # Извлекаем хэштег из сообщения
     hashtag = extract_hashtag_from_text(message_text)
     
     if hashtag:
-        # 1. Проверяем, есть ли у пользователя такая роль (регистронезависимо)
         user_has_role = user_has_role_with_hashtag(user_db.id, hashtag)
         
         if user_has_role:
-            # 2. Проверяем на специальные символы в начале/конце
             if starts_with_special_chars(message_text):
                 logger.info(f"Пост отклонен: начинается со спецсимволов /, \\, |")
                 is_post = False
-            # 3. Проверяем на слишком много смайликов
             elif has_too_many_emojis(message_text):
                 logger.info(f"Пост отклонен: более 45 смайликов")
                 is_post = False
-            # 4. Проверяем минимальное содержание
             elif not has_minimum_content(message_text):
                 logger.info(f"Пост отклонен: недостаточно содержания")
                 is_post = False
-            # 5. Проверяем наличие медиа (фото, видео и т.д.)
             elif (update.effective_message.photo is not None or 
                   update.effective_message.video is not None or
                   update.effective_message.animation is not None):
-                # Пост с медиа - сразу одобряем (если есть правильный хэштег)
                 is_post = True
                 logger.info(f"Пост принят: медиа с хэштегом #{hashtag}")
-            # 6. Если нет медиа, проверяем текст
             else:
                 post_text = message_text.strip()
-                # Текстовый пост должен соответствовать всем критериям
                 if has_minimum_content(post_text):
                     is_post = True
                     logger.info(f"Пост принят: текст с хэштегом #{hashtag}")
@@ -3032,14 +3124,11 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
                     is_post = False
                     logger.info(f"Пост отклонен: недостаточно текста")
         else:
-            # У пользователя нет такой роли
             logger.info(f"Пост отклонен: хэштег #{hashtag} не соответствует ролям пользователя")
             is_post = False
     else:
-        # Нет хэштега
         is_post = False
 
-    # ОБРАБОТКА ПОСТА (если прошел все проверки)
     if is_post:
         try:
             new_post = Post(
@@ -3053,7 +3142,6 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
 
             stats.post_count += 1
 
-            # Обновляем активность роли
             user_role = session.query(Role).filter(
                 Role.user_id == user_db.id,
                 func.lower(Role.hashtag) == func.lower(hashtag)
@@ -3079,7 +3167,6 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
         except Exception as e:
             logger.error(f"Ошибка при сохранении поста: {e}")
     else:
-        # Логирование обычного сообщения (не пост)
         if should_log and logging_active and message_text:
             log_entry = (
                 f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
@@ -4509,7 +4596,6 @@ def main() -> None:
     application.add_handler(CommandHandler("stopfilter", stop_filter, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("qyqyqs", qyqyqs, filters=allowed_chats_filter))
 
-    # Добавляем секретные команды разработчика
     application.add_handler(CommandHandler("FreePost", free_post, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("CancelPost", cancel_post, filters=allowed_chats_filter))
     application.add_handler(CommandHandler("CheckDLI", check_dli, filters=allowed_chats_filter))
