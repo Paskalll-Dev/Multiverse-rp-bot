@@ -667,17 +667,15 @@ async def free_post(update: Update, context: ContextTypes.DEFAULT_TYPE, session)
     roles = session.query(Role).filter(Role.user_id == user_db.id).all()
     for role in roles:
         role.is_longposter_exempt = True
-        role.last_warning_sent = None
     
     await update.message.reply_text(
-        f"Пользователь @{user_db.username or user_db.id} теперь длиннострочник.\n"
-        f"Правило неактива не действует на {len(roles)} ролей пользователя."
+        f"Пользователь @{user_db.username or user_db.id} теперь длиннострочник."
     )
     
     try:
         await context.bot.send_message(
             chat_id=user_db.id,
-            text="Вам присвоен статус 'Длиннострочник'. Правило неактива (10 дней) на вас больше не действует."
+            text="Вам присвоен статус 'Длиннострочник'."
         )
     except TelegramError as e:
         logger.warning(f"Не удалось уведомить пользователя {user_db.id}: {e}")
@@ -705,17 +703,15 @@ async def cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
     roles = session.query(Role).filter(Role.user_id == user_db.id).all()
     for role in roles:
         role.is_longposter_exempt = False
-        role.last_active = datetime.date.today()
     
     await update.message.reply_text(
-        f"Пользователь @{user_db.username or user_db.id} больше не длиннострочник.\n"
-        f"Счет неактива запущен для {len(roles)} ролей пользователя."
+        f"Пользователь @{user_db.username or user_db.id} больше не длиннострочник."
     )
     
     try:
         await context.bot.send_message(
             chat_id=user_db.id,
-            text="Ваш статус 'Длиннострочник' снят. Теперь на вас действует правило неактива (10 дней)."
+            text="Ваш статус 'Длиннострочник' снят."
         )
     except TelegramError as e:
         logger.warning(f"Не удалось уведомить пользователя {user_db.id}: {e}")
@@ -786,9 +782,9 @@ async def check_roles_all(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 async def secret_help(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> None:
     help_text = """Секретные команды разработчика:
 
-/FreePost [username/ID] - Освобождает пользователя от счетчика неактивности. Статус: "Длиннострочник, Правило неактива не действует"
+/FreePost [username/ID] - Освобождает пользователя от счетчика неактивности. Статус: "Длиннострочник"
 
-/CancelPost [username/ID] - Отменяет статус длиннострочника и запускает счет неактива
+/CancelPost [username/ID] - Отменяет статус длиннострочника
 
 /CheckDLI - Показывает всех пользователей-длиннострочников и их роли (пронумерованный список)
 
@@ -801,80 +797,10 @@ async def secret_help(update: Update, context: ContextTypes.DEFAULT_TYPE, sessio
     await update.message.reply_text(help_text)
 
 async def check_inactive_roles_with_warnings(context: ContextTypes.DEFAULT_TYPE) -> None:
-    session = get_session_for_job()
-    try:
-        today = datetime.date.today()
-
-        warning_threshold = today - datetime.timedelta(days=7)
-        removal_threshold = today - datetime.timedelta(days=10)
-
-        roles_to_warn = session.query(Role).filter(
-            Role.last_active < warning_threshold,
-            Role.last_active >= removal_threshold,
-            or_(Role.last_warning_sent.is_(None), Role.last_warning_sent < warning_threshold),
-            Role.is_longposter_exempt == False
-        ).all()
-
-        for role in roles_to_warn:
-            user = session.query(User).filter(User.id == role.user_id).first()
-            if user:
-                try:
-                    await context.bot.send_message(
-                        chat_id=user.id,
-                        text=f"Внимание! Ваша роль '{role.name}' (хэштег #{role.hashtag}) неактивна более 7 дней. "
-                             f"Если вы не сделаете пост с этим хэштегом в течение 3 дней, роль будет автоматически удалена."
-                    )
-                    role.last_warning_sent = today
-                    logger.info(f"Отправлено предупреждение пользователю {user.id} о неактивной роли {role.name}")
-                    
-                    for dev_id in DEVELOPER_IDS:
-                        try:
-                            await context.bot.send_message(
-                                chat_id=dev_id,
-                                text=f"Пользователь @{user.username or user.id} предупрежден об неактиве на роли '{role.name}' (#{role.hashtag})"
-                            )
-                        except TelegramError as e:
-                            logger.warning(f"Не удалось уведомить разработчика {dev_id}: {e}")
-                except TelegramError as e:
-                    logger.warning(f"Не удалось отправить предупреждение пользователю {user.id}: {e}")
-
-        roles_to_remove = session.query(Role).filter(
-            Role.last_active < removal_threshold,
-            Role.is_longposter_exempt == False
-        ).all()
-
-        for role in roles_to_remove:
-            user = session.query(User).filter(User.id == role.user_id).first()
-            role_name = role.name
-            hashtag = role.hashtag
-
-            session.delete(role)
-
-            if user:
-                try:
-                    await context.bot.send_message(
-                        chat_id=user.id,
-                        text=f"Ваша роль '{role_name}' (хэштег #{hashtag}) была удалена за неактивность более 10 дней."
-                    )
-                    logger.info(f"Удалена роль '{role_name}' у пользователя {user.id} за неактивность")
-                except TelegramError as e:
-                    logger.warning(f"Не удалось уведомить пользователя {user.id} об удалении роли: {e}")
-            
-            for dev_id in DEVELOPER_IDS:
-                try:
-                    await context.bot.send_message(
-                        chat_id=dev_id,
-                        text=f"У пользователя @{user.username or user.id} удалена роль '{role_name}' (#{hashtag})\nПричина: неактив 10 дней"
-                    )
-                except TelegramError as e:
-                    logger.warning(f"Не удалось уведомить разработчика {dev_id}: {e}")
-
-        session.commit()
-
-    except Exception as e:
-        logger.error(f"Ошибка при выполнении задачи check_inactive_roles_with_warnings: {e}", exc_info=True)
-    finally:
-        session.close()
+    # УДАЛЕНА ВСЯ ЛОГИКА ПРОВЕРКИ НЕАКТИВА
+    # Эта функция теперь ничего не делает
+    logger.info("Проверка неактива ролей отключена (правило отменено)")
+    return
 
 @db_session
 @not_banned
@@ -907,7 +833,7 @@ async def check_role(update: Update, context: ContextTypes.DEFAULT_TYPE, session
         response += f"Название роли: {role.name}\n"
         response += f"Хэштег: #{role.hashtag}\n"
         response += f"Взял Роль: {role.last_active.strftime('%d.%m.%Y')}\n"
-        response += f"Статус: Длиннострочник, Правило неактива не действует"
+        response += f"Статус: Длиннострочник"
     else:
         response = f"Роль занята!\n"
         response += f"Владелец Роли: @{owner.username or owner.id}\n"
@@ -2041,20 +1967,16 @@ async def send_anketa_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @db_session_for_conversation
 async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, session) -> int:
-    # Проверяем, есть ли медиагруппа
     if update.message.media_group_id:
-        # Это часть медиагруппы
         media_group_id = update.message.media_group_id
         context.user_data.setdefault('media_groups', {})
         
-        # Инициализируем или получаем группу
         if media_group_id not in context.user_data['media_groups']:
             context.user_data['media_groups'][media_group_id] = {
                 'items': [],
                 'first_message_id': update.message.message_id
             }
         
-        # Добавляем медиа в группу
         media_item = {}
         if update.message.photo:
             media_item = {
@@ -2081,12 +2003,10 @@ async def anketa_message(update: Update, context: ContextTypes.DEFAULT_TYPE, ses
         if media_item:
             context.user_data['media_groups'][media_group_id]['items'].append(media_item)
         
-        # Для первого сообщения в группе отвечаем пользователю
         if len(context.user_data['media_groups'][media_group_id]['items']) == 1:
             await update.message.reply_text("Медиагруппа добавлена в анкету. Продолжайте или напишите /done_anketa для завершения.")
         return STATE_ANKETA_MESSAGE
     
-    # Обычное сообщение (не медиагруппа)
     message_content = {}
 
     if update.message.text:
@@ -2131,10 +2051,8 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
     anketa_content_list = context.user_data.pop('anketa_buffer', [])
     media_groups = context.user_data.pop('media_groups', {})
     
-    # Добавляем медиагруппы в список контента
     for media_group_id, group_data in media_groups.items():
         if group_data['items']:
-            # Сохраняем медиагруппу как один элемент
             anketa_content_list.append({
                 'type': 'media_group',
                 'items': group_data['items'],
@@ -2145,7 +2063,6 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await update.message.reply_text("Вы не отправили ни одного сообщения для анкеты. Запрос отменен.")
         return ConversationHandler.END
 
-    # Сохраняем как JSON строку
     anketa_json = json.dumps(anketa_content_list, ensure_ascii=False, indent=2)
     
     new_anketa = AnketaRequest(
@@ -2157,14 +2074,12 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
     session.commit()
     session.refresh(new_anketa)
 
-    # Получаем всех анкетников и разработчиков
     anketniks = session.query(User).filter(
         or_(User.is_anketnik == True, User.is_developer == True)
     ).all()
 
     for anketnik in anketniks:
         try:
-            # Отправляем основное сообщение с кнопками
             admin_message_text = f"Новая анкета от @{user_tg.username or user_tg.id} (ID: {user_tg.id}):"
 
             keyboard = [
@@ -2182,7 +2097,6 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 reply_markup=reply_markup
             )
 
-            # Отправляем контент анкеты
             for item in anketa_content_list:
                 try:
                     if item['type'] == 'text':
@@ -2193,10 +2107,8 @@ async def done_anketa_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                 text=text_content
                             )
                     elif item['type'] == 'media_group':
-                        # Отправляем медиагруппу
                         media_items = item.get('items', [])
                         if media_items:
-                            # Создаем список InputMedia
                             media_list = []
                             for i, media_item in enumerate(media_items):
                                 if media_item['type'] == 'photo':
@@ -2418,7 +2330,6 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
     user = anketa.user
     admin_username = query.from_user.username or query.from_user.id
 
-    # Получаем контент анкеты
     anketa_content_json = anketa.anketa_content
     try:
         anketa_content = json.loads(anketa_content_json)
@@ -2440,14 +2351,12 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning(f"Не удалось уведомить пользователя {user.id} об одобрении анкеты: {e}")
 
         try:
-            # Отправляем оповещение в канал
             await send_to_channel_with_retry(
                 context=context,
                 chat_id=ANKET_CHANNEL_ID,
                 text=f"Новая анкета от @{user.username or user.id}!"
             )
 
-            # Отправляем контент анкеты В ТАКОМ ЖЕ ВИДЕ
             if isinstance(anketa_content, list):
                 for item in anketa_content:
                     try:
@@ -2463,7 +2372,6 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                                         text=content
                                     )
                             elif item_type == 'media_group':
-                                # Отправляем медиагруппу в канал
                                 media_items = item.get('items', [])
                                 if media_items:
                                     media_list = []
@@ -2536,7 +2444,6 @@ async def handle_anketa_callback(update: Update, context: ContextTypes.DEFAULT_T
                         logger.error(f"Не удалось отправить часть анкеты в канал: {e}")
                         continue
             else:
-                # Если не список, отправляем как есть
                 try:
                     content_str = str(anketa_content)
                     if content_str and content_str.strip() and content_str != "[]":
@@ -2875,7 +2782,7 @@ async def handle_support_callback(update: Update, context: ContextTypes.DEFAULT_
     if action == "end":
         support_request.status = "closed"
         response_text = f"Ваш запрос в поддержку был закрыт администратором @{admin_username}."
-        await query.answer("Запрос поддержки закрыт.")
+        await query.answer("Запрос поддерки закрыт.")
         new_keyboard_for_admin_chat[0][0] = InlineKeyboardButton("Ответить", callback_data="none")
         new_keyboard_for_admin_chat[0][1] = InlineKeyboardButton(f"Статус: Закрыто", callback_data="none")
 
@@ -3094,7 +3001,6 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
         text_without_emojis = EMOJI_PATTERN.sub('', clean_text)
         return len(text_without_emojis.strip()) >= 3
 
-    # Извлекаем хэштег из сообщения
     hashtag = extract_hashtag_from_text(message_text)
     
     if hashtag:
@@ -3149,7 +3055,6 @@ async def log_and_stats_message_handler(update: Update, context: ContextTypes.DE
             
             if user_role:
                 user_role.last_active = datetime.date.today()
-                user_role.last_warning_sent = None
                 logger.info(f"Активность роли '{user_role.name}' (#{hashtag}) обновлена")
 
             if should_log and logging_active:
